@@ -1,0 +1,12 @@
+# Normalizacja konca linii: pliki tekstowe Godota trzymamy z LF
+*.gd        text eol=lf
+*.tscn      text eol=lf
+*.tres      text eol=lf
+*.godot     text eol=lf
+*.cfg       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+
+# Pliki binarne
+*.png       binary
+*.svg       text eol=lf

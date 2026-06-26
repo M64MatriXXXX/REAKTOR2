@@ -1,0 +1,22 @@
+# Godot 4.x
+.godot/
+.import/
+export.cfg
+export_presets.cfg
+
+# Wygenerowane / lokalne
+*.tmp
+*.import
+mono_crash.*.json
+
+# Wyniki testow i eksporty debug
+.gut_editor_config.json
+out/
+*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

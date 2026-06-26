@@ -1,0 +1,30 @@
+; Godot 4.x project configuration
+; config_version=5 odpowiada Godot 4.0–4.4 (do weryfikacji przy pierwszym otwarciu w edytorze)
+
+config_version=5
+
+[application]
+
+config/name="REAKTOR - Symulator Elektrowni Jadrowej"
+config/description="Realistyczny symulator reaktora typu RBMK. Rdzen fizyki oddzielony od UI."
+run/main_scene=""
+config/features=PackedStringArray("4.3", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+; (puste w ETAP 0 - autoloady dodamy przy UI/multiplayerze)
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg")
+
+[physics]
+
+; Symulacja fizyki rdzenia chodzi na wlasnej, stalokrokowej petli (50 Hz),
+; niezaleznej od _physics_process silnika. Patrz core/simulation.gd.
+common/physics_ticks_per_second=50
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
