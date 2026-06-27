@@ -16,38 +16,52 @@ func _initialize() -> void:
 	var seconds: float = float(args.get("seconds", "5"))
 	var seed_value: int = int(args.get("seed", "0"))
 	var out_path: String = args.get("out", "out/run.csv")
-	# Reaktywnosc rho zadawana na caly przebieg (wejscie testowe ETAP 1A).
-	var reactivity: float = float(args.get("reactivity", "0"))
+	# Sterowanie pretami: docelowe zaglebienie 0..1 (domyslnie -1 = bez zmiany / pozycja krytyczna).
+	var rod_target: float = float(args.get("rod-target", "-1"))
+	# Bias reaktywnosci zewnetrznej [Δρ] na caly przebieg (np. impuls testowy).
+	var external: float = float(args.get("external", "0"))
+	# Czas [s], w ktorym wywolac SCRAM (ujemny = bez SCRAM).
+	var scram_at: float = float(args.get("scram-at", "-1"))
 	# Co ile krokow zapisywac wiersz (1 = kazdy krok). Domyslnie 5 -> 10 Hz zapisu.
 	var sample_every: int = int(args.get("sample", "5"))
 
-	print("=== REAKTOR headless runner (ETAP 1A) ===")
-	print("seconds=%s seed=%s rho=%s out=%s sample_every=%s" % [
-		seconds, seed_value, reactivity, out_path, sample_every])
+	print("=== REAKTOR headless runner (ETAP 1B) ===")
+	print("seconds=%s seed=%s rod_target=%s external=%s scram_at=%s out=%s" % [
+		seconds, seed_value, rod_target, external, scram_at, out_path])
 
 	var sim := Simulation.new(seed_value)
-	sim.set_reactivity(reactivity)
+	sim.set_external_reactivity(external)
+	if rod_target >= 0.0:
+		sim.set_rod_target(rod_target)
 	var total_steps := int(round(seconds * Simulation.PHYSICS_HZ))
+	var scram_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,reactivity,reactor_power_fraction,reactor_period_s")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,reactor_power_fraction,reactor_period_s")
 
 	for i in range(total_steps):
+		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
+			sim.scram()
+			scram_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.4f" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
+				sim.state.rod_insertion,
 				sim.state.reactivity,
+				sim.state.rho_rods,
+				sim.state.rho_doppler,
+				sim.state.rho_void,
 				sim.state.reactor_power_fraction,
 				sim.state.reactor_period_seconds,
 			])
 
 	_write_csv(out_path, rows)
 	print("Zapisano %d wierszy do %s" % [rows.size() - 1, out_path])
-	print("Stan koncowy: t=%.2fs power=%.6f period=%.2fs" % [
-		sim.state.sim_time_seconds, sim.state.reactor_power_fraction,
-		sim.state.reactor_period_seconds])
+	print("Stan koncowy: t=%.2fs rod=%.4f rho=%.6f power=%.6f period=%.2fs" % [
+		sim.state.sim_time_seconds, sim.state.rod_insertion, sim.state.reactivity,
+		sim.state.reactor_power_fraction, sim.state.reactor_period_seconds])
 
 	quit()
 
