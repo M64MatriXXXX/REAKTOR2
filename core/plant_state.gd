@@ -16,10 +16,12 @@ extends RefCounted
 var sim_time_seconds: float = 0.0   # [s] czas od startu symulacji
 var tick: int = 0                   # numer kroku (do determinizmu/debug)
 
-# --- Placeholder fizyki (ZASTEPCZE - wypelnimy w ETAPIE 1) ---
-# UPROSZCZENIE: w ETAP 0 trzymamy jedna zastepcza wielkosc, by zademonstrowac
-# stalokrokowa petle i eksport danych. Realny model wejdzie po akceptacji planu.
-var reactor_power_fraction: float = 0.0   # [-] ulamek mocy nominalnej (0..1), placeholder
+# --- Neutronika (ETAP 1A) ---
+var reactor_power_fraction: float = 0.0   # [-] ulamek mocy nominalnej (n), n=1 -> nominalna
+var reactivity: float = 0.0               # [-] aktualna reaktywnosc rho (w 1A wejscie zewnetrzne)
+var reactor_period_seconds: float = INF   # [s] okres reaktora (INF gdy moc stala)
+
+# UWAGA (ETAP 1B+): dojda pola termiki, cisnienia, frakcji pustek, ksenonu itd.
 
 
 ## Zwraca slownik z pelnym stanem - podstawa save/load oraz synchronizacji sieciowej.
@@ -28,6 +30,8 @@ func to_dict() -> Dictionary:
 		"sim_time_seconds": sim_time_seconds,
 		"tick": tick,
 		"reactor_power_fraction": reactor_power_fraction,
+		"reactivity": reactivity,
+		"reactor_period_seconds": reactor_period_seconds,
 	}
 
 
@@ -36,6 +40,8 @@ func from_dict(data: Dictionary) -> void:
 	sim_time_seconds = data.get("sim_time_seconds", 0.0)
 	tick = data.get("tick", 0)
 	reactor_power_fraction = data.get("reactor_power_fraction", 0.0)
+	reactivity = data.get("reactivity", 0.0)
+	reactor_period_seconds = data.get("reactor_period_seconds", INF)
 
 
 ## Gleboka kopia stanu (przydatna do snapshotow i testow regresji).

@@ -12,31 +12,53 @@ extends RefCounted
 ## Determinizm: przy zadanym ziarnie (seed) i tej samej sekwencji komend
 ## wynik jest identyczny. To warunek konieczny testow i multiplayera.
 ##
-## ETAP 0: step() jedynie posuwa czas i ustawia placeholderowa wartosc mocy,
-##         by zademonstrowac petle i eksport CSV. Fizyka wejdzie w ETAPIE 1.
+## ETAP 1A: step() prowadzi kinetyke punktowa (Neutronics). Reaktywnosc rho jest
+##          na razie wejsciem zewnetrznym/skryptowym (set_reactivity). Pelny bilans
+##          reaktywnosci (pret, Doppler, void, ksenon) dojdzie w podetapie 1B.
 
 # Stala czestotliwosc kroku fizyki. 50 Hz -> dt = 0.02 s.
 const PHYSICS_HZ: float = 50.0
 const FIXED_DT: float = 1.0 / PHYSICS_HZ   # [s]
 
 var state: PlantState
+var neutronics: Neutronics
+var params: ReactorParams
+
+var _commanded_reactivity: float = 0.0     # rho zadawane z zewnatrz (wejscie 1A)
 var _rng: RandomNumberGenerator
 
 
-func _init(seed_value: int = 0) -> void:
+## seed_value - ziarno determinizmu; reactor_params - opcjonalne stale (domyslnie standardowe).
+func _init(seed_value: int = 0, reactor_params: ReactorParams = null) -> void:
 	state = PlantState.new()
 	_rng = RandomNumberGenerator.new()
 	_rng.seed = seed_value
+	params = reactor_params if reactor_params != null else ReactorParams.new()
+	neutronics = Neutronics.new(params)
+	# Start w rownowadze na mocy nominalnej (n=1).
+	neutronics.initialize_steady_state(1.0)
+	_sync_state()
+
+
+## Ustawia reaktywnosc rho zadawana z zewnatrz (wejscie testowe/skryptowe w ETAP 1A).
+func set_reactivity(value: float) -> void:
+	_commanded_reactivity = value
 
 
 ## Wykonuje JEDEN krok symulacji o staly FIXED_DT.
-## ETAP 1: tutaj wpiety zostanie lancuch modeli fizycznych.
+## ETAP 1B: przed neutronika wejdzie obliczenie pelnego rho, po niej termohydraulika.
 func step() -> void:
-	# UPROSZCZENIE (ETAP 0): brak fizyki. Placeholderowa "moc" rosnie liniowo
-	# i nasyca sie do 1.0 - sluzy wylacznie do testu petli i eksportu danych.
 	state.tick += 1
 	state.sim_time_seconds += FIXED_DT
-	state.reactor_power_fraction = minf(1.0, state.reactor_power_fraction + 0.001)
+	neutronics.step(_commanded_reactivity, FIXED_DT)
+	_sync_state()
+
+
+## Przepisuje wynik modeli fizycznych do serializowalnego PlantState (kanal dla UI/sieci).
+func _sync_state() -> void:
+	state.reactor_power_fraction = neutronics.get_power_fraction()
+	state.reactivity = _commanded_reactivity
+	state.reactor_period_seconds = neutronics.get_reactor_period()
 
 
 ## Posuwa symulacje o zadany realny czas, dzielac go na stale subkroki.
