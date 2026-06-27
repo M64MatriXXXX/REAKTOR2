@@ -25,6 +25,7 @@ var neutronics: Neutronics
 var params: ReactorParams
 
 var _commanded_reactivity: float = 0.0     # rho zadawane z zewnatrz (wejscie 1A)
+var _time_accumulator: float = 0.0         # trwaly akumulator czasu (fixed timestep)
 var _rng: RandomNumberGenerator
 
 
@@ -61,14 +62,18 @@ func _sync_state() -> void:
 	state.reactor_period_seconds = neutronics.get_reactor_period()
 
 
-## Posuwa symulacje o zadany realny czas, dzielac go na stale subkroki.
-## Akumulator gwarantuje niezaleznosc fizyki od FPS renderowania.
+## Posuwa symulacje o zadany realny czas, dzielac go na stale kroki FIXED_DT.
+## Trwaly akumulator gwarantuje niezaleznosc fizyki od FPS i to, ze reszta czasu
+## nie ginie, lecz przenosi sie do kolejnego wywolania (poprawnosc + brak dryfu).
+## Epsilon kompensuje to, ze 0.02 s nie jest dokladnie reprezentowalne w double.
 ## Zwraca liczbe wykonanych krokow.
+const _ACCUMULATOR_EPSILON: float = 1.0e-9
+
 func advance(real_delta_seconds: float) -> int:
 	var steps := 0
-	var remaining := real_delta_seconds
-	while remaining >= FIXED_DT:
+	_time_accumulator += real_delta_seconds
+	while _time_accumulator >= FIXED_DT - _ACCUMULATOR_EPSILON:
 		step()
-		remaining -= FIXED_DT
+		_time_accumulator -= FIXED_DT
 		steps += 1
 	return steps

@@ -1,3 +1,7 @@
+# Binarka silnika (trzymana lokalnie, nie w repo - 178 MB)
+Godot.exe
+Godot*.exe
+
 # Godot 4.x
 .godot/
 .import/

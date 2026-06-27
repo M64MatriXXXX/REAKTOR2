@@ -1,19 +1,23 @@
-; Godot 4.x project configuration
-; config_version=5 odpowiada Godot 4.0–4.4 (do weryfikacji przy pierwszym otwarciu w edytorze)
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
 config/name="REAKTOR - Symulator Elektrowni Jadrowej"
 config/description="Realistyczny symulator reaktora typu RBMK. Rdzen fizyki oddzielony od UI."
-run/main_scene=""
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
-
-[autoload]
-
-; (puste w ETAP 0 - autoloady dodamy przy UI/multiplayerze)
 
 [editor_plugins]
 
@@ -21,8 +25,6 @@ enabled=PackedStringArray("res://addons/gut/plugin.cfg")
 
 [physics]
 
-; Symulacja fizyki rdzenia chodzi na wlasnej, stalokrokowej petli (50 Hz),
-; niezaleznej od _physics_process silnika. Patrz core/simulation.gd.
 common/physics_ticks_per_second=50
 
 [rendering]
