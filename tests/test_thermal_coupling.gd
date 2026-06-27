@@ -20,11 +20,9 @@ func test_nominal_start_holds_steady() -> void:
 func test_doppler_damps_impulse_at_nominal() -> void:
 	# Realne sprzezenie (zastepuje kwazi-statyczny model z testu 1B):
 	# +50 pcm w nominale -> Doppler grzeje paliwo i TLUMI ekskursje do ~1.08.
-	# Badamy sama fizyke tlumienia: RPS rozbrojony (inaczej period-trip na skoku impulsu
-	# nuisance-scramuje; to artefakt skokowego impulsu testowego, nie ruchu pretow).
+	# RPS UZBROJONY: filtr persystencji odrzuca krotki prompt-jump okresu (~0.08s),
+	# wiec maly impuls NIE wywoluje nuisance-SCRAM - sprawdzamy czysta fizyke tlumienia.
 	var sim := Simulation.new(0)
-	sim.set_protection_enabled(false)
-	sim.set_failure_states_enabled(false)
 	sim.set_external_reactivity(0.0005)
 	sim.advance(120.0)
 	var p := sim.state.reactor_power_fraction

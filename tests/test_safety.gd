@@ -56,7 +56,7 @@ func _safe_state() -> PlantState:
 
 func test_rps_no_trip_at_nominal() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
-	assert_true(rps.evaluate(_safe_state(), false).is_empty(),
+	assert_true(rps.evaluate_raw(_safe_state(), false).is_empty(),
 		"W nominale brak sygnalow AZ")
 
 
@@ -64,45 +64,95 @@ func test_rps_overpower_trip() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
 	var s := _safe_state()
 	s.reactor_power_fraction = 1.2
-	assert_true(TripSignal.Type.OVERPOWER in rps.evaluate(s, false), "Trip przemocowania")
+	assert_true(TripSignal.Type.OVERPOWER in rps.evaluate_raw(s, false), "Trip przemocowania")
 
 
 func test_rps_period_trip_only_for_short_positive_period() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
 	var s := _safe_state()
 	s.reactor_period_seconds = 10.0   # krotki dodatni okres = rozbieganie
-	assert_true(TripSignal.Type.PERIOD in rps.evaluate(s, false), "Krotki okres -> trip")
+	assert_true(TripSignal.Type.PERIOD in rps.evaluate_raw(s, false), "Krotki okres -> trip")
 	s.reactor_period_seconds = INF
-	assert_false(TripSignal.Type.PERIOD in rps.evaluate(s, false), "Stabilna moc -> brak trip")
+	assert_false(TripSignal.Type.PERIOD in rps.evaluate_raw(s, false), "Stabilna moc -> brak trip")
 	s.reactor_period_seconds = -5.0   # ujemny = moc maleje, nie rozbiega
-	assert_false(TripSignal.Type.PERIOD in rps.evaluate(s, false), "Ujemny okres -> brak trip")
+	assert_false(TripSignal.Type.PERIOD in rps.evaluate_raw(s, false), "Ujemny okres -> brak trip")
 
 
 func test_rps_fuel_temp_trip() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
 	var s := _safe_state()
 	s.fuel_temp = 2900.0
-	assert_true(TripSignal.Type.FUEL_TEMP in rps.evaluate(s, false), "Trip wysokiej temp. paliwa")
+	assert_true(TripSignal.Type.FUEL_TEMP in rps.evaluate_raw(s, false), "Trip wysokiej temp. paliwa")
 
 
 func test_rps_void_trip() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
 	var s := _safe_state()
 	s.void_fraction = 0.8
-	assert_true(TripSignal.Type.VOID in rps.evaluate(s, false), "Trip nadmiernego wrzenia")
+	assert_true(TripSignal.Type.VOID in rps.evaluate_raw(s, false), "Trip nadmiernego wrzenia")
 
 
 func test_rps_low_flow_trip() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
 	var s := _safe_state()
 	s.coolant_flow_fraction = 0.3
-	assert_true(TripSignal.Type.LOW_FLOW in rps.evaluate(s, false), "Trip niskiego przeplywu")
+	assert_true(TripSignal.Type.LOW_FLOW in rps.evaluate_raw(s, false), "Trip niskiego przeplywu")
 
 
 func test_rps_manual_az5() -> void:
 	var rps := ProtectionSystem.new(SafetyParams.new())
-	assert_true(TripSignal.Type.MANUAL_AZ5 in rps.evaluate(_safe_state(), true),
+	assert_true(TripSignal.Type.MANUAL_AZ5 in rps.evaluate_raw(_safe_state(), true),
 		"Manualny AZ-5 zawsze daje sygnal")
+
+
+# --- Filtr persystencji (debounce) sygnalow AZ ---
+
+func test_trip_debounce_requires_persistence() -> void:
+	var rps := ProtectionSystem.new(SafetyParams.new())   # okno 0.5 s
+	var s := _safe_state()
+	s.reactor_power_fraction = 1.2   # warunek przemocowania UTRZYMANY
+	# Ponizej okna (0.40 s) - jeszcze nie potwierdza.
+	for i in range(20):
+		assert_true(rps.update(s, false, 0.02).is_empty(), "Warunek <0.5 s jeszcze nie scramuje")
+	# Po przekroczeniu okna - potwierdzony.
+	var confirmed: Array[int] = []
+	for i in range(10):
+		confirmed = rps.update(s, false, 0.02)
+	assert_true(TripSignal.Type.OVERPOWER in confirmed, "Po >=0.5 s warunek potwierdzony -> SCRAM")
+
+
+func test_brief_condition_does_not_confirm_and_resets() -> void:
+	var rps := ProtectionSystem.new(SafetyParams.new())
+	var s_hot := _safe_state()
+	s_hot.reactor_power_fraction = 1.2
+	var s_ok := _safe_state()
+	# Krotko aktywny (0.1 s), potem warunek znika -> licznik reset.
+	for i in range(5):
+		rps.update(s_hot, false, 0.02)
+	for i in range(5):
+		assert_true(rps.update(s_ok, false, 0.02).is_empty(), "Po ustaniu warunku brak tripu")
+	# Po resecie liczymy od zera: 0.40 s nadal za malo.
+	for i in range(20):
+		assert_true(rps.update(s_hot, false, 0.02).is_empty(),
+			"Licznik wystartowal od zera (brak kumulacji ze starym epizodem)")
+
+
+func test_manual_az5_instant_despite_debounce() -> void:
+	var rps := ProtectionSystem.new(SafetyParams.new())
+	var conf := rps.update(_safe_state(), true, 0.02)
+	assert_true(TripSignal.Type.MANUAL_AZ5 in conf, "AZ-5 dziala natychmiast (bez okna)")
+
+
+func test_small_impulse_does_not_nuisance_scram() -> void:
+	# Pelna Simulation z UZBROJONYM RPS: +50 pcm daje krotki okres na ~0.08 s.
+	# Filtr persystencji odrzuca ten artefakt - reaktor NIE scramuje, moc tlumiona.
+	var sim := Simulation.new(0)
+	sim.set_external_reactivity(0.0005)
+	sim.advance(120.0)
+	assert_eq(sim.get_reactor_state(), ReactorStateMachine.State.OPERATE,
+		"Maly impuls nie wywoluje nuisance-SCRAM (debounce)")
+	assert_false(sim.is_failed(), "Brak awarii")
+	assert_lt(sim.state.reactor_power_fraction, 1.15, "Moc wytlumiona Dopplerem (~1.08)")
 
 
 # --- Warunki przegranej ---

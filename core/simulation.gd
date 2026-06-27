@@ -245,10 +245,11 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 ## 1) RPS (jesli uzbrojony): aktywne sygnaly AZ -> auto-SCRAM.
 ## 2) Warunki przegranej (jesli wlaczone): pierwsza awaria zamraza symulacje.
 func _evaluate_safety() -> void:
-	# 1) Sygnaly AZ. Manualny AZ-5 liczy sie zawsze; pozostale tylko przy uzbrojonym RPS.
+	# 1) Sygnaly AZ z oknem potwierdzenia (debounce). Manualny AZ-5 liczy sie zawsze;
+	#    auto-trip-y tylko przy uzbrojonym RPS i po utrzymaniu warunku (filtr artefaktow).
 	var trips: Array[int] = []
 	if _protection_enabled:
-		trips = protection_system.evaluate(state, _manual_az5)
+		trips = protection_system.update(state, _manual_az5, FIXED_DT)
 	elif _manual_az5:
 		trips.append(TripSignal.Type.MANUAL_AZ5)
 	state.active_trips = trips

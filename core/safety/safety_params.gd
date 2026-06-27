@@ -18,6 +18,12 @@ extends Resource
 @export var void_trip_fraction: float = 0.70
 # Niski przeplyw chlodziwa [-] (ulamek nominalu).
 @export var low_flow_trip_fraction: float = 0.50
+# Okno POTWIERDZENIA sygnalu AZ [s]: warunek musi sie utrzymac tak dlugo, zanim
+# wymusi SCRAM. Filtruje artefakty (prompt jump po skokowym impulsie daje krotki
+# okres na ~0.08 s) od realnego rozbiegania (warunek utrzymany sekundami).
+# Manualny AZ-5 jest NATYCHMIASTOWY (bez okna). Warunki przegranej tez (backstop).
+# UPROSZCZENIE: jedno wspolne okno dla wszystkich auto-tripow (realny RPS ma rozne).
+@export var trip_confirmation_time_s: float = 0.5
 # Niski ORM [rownowazne prety] - HAK do 1E-3 (ORM jeszcze nieliczony w 1E-1).
 @export var orm_trip_equivalent_rods: float = 15.0
 # Wysokie cisnienie [MPa] - HAK do 1C' (obieg jeszcze niemodelowany).
@@ -54,6 +60,7 @@ func validate() -> void:
 		"SafetyParams: trip temp. paliwa musi byc PONIZEJ progu topnienia (margines)")
 	assert(void_trip_fraction > 0.0 and void_trip_fraction <= 1.0,
 		"SafetyParams: void_trip_fraction w (0,1]")
+	assert(trip_confirmation_time_s >= 0.0, "SafetyParams: trip_confirmation_time_s musi byc >= 0")
 	assert(clad_temp_fuel_weight >= 0.0 and clad_temp_fuel_weight <= 1.0,
 		"SafetyParams: clad_temp_fuel_weight w [0,1]")
 	assert(power_runaway_fraction > overpower_trip_fraction,
