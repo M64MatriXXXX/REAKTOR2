@@ -12,10 +12,12 @@ extends RefCounted
 ## Determinizm: przy zadanym ziarnie (seed) i tej samej sekwencji komend
 ## wynik jest identyczny. To warunek konieczny testow i multiplayera.
 ##
-## ETAP 1B: rho liczy ReactivityModel z pozycji pretow i sprzezen. Wejscia termiczne
-##          (T_paliwa, T_chlodziwa, pustki) sa na razie na wartosciach REFERENCYJNYCH
-##          (sprzezenia = 0); realne wartosci dostarczy termohydraulika w 1C.
-##          Reaktorem steruja PRETY (set_rod_target / scram) + opcjonalny bias zewn.
+## ETAP 1C: wejscia termiczne (T_paliwa, T_chlodziwa, pustki) liczy ThermalModel
+##          z aktualnej mocy i przeplywu chlodziwa. SPRZEZENIE Z OPOZNIENIEM 1 KROKU:
+##          reaktywnosc w kroku k korzysta ze stanu cieplnego z konca kroku k-1
+##          (najpierw neutronika, potem termika) - prostsze i stabilne (bez iteracji
+##          w obrebie kroku). Realny obieg pomp/zaworow/cisnienia dojdzie w 1C'.
+##          Reaktorem steruja PRETY (set_rod_target / scram) + przeplyw + bias zewn.
 
 # Stala czestotliwosc kroku fizyki. 50 Hz -> dt = 0.02 s.
 const PHYSICS_HZ: float = 50.0
@@ -26,13 +28,17 @@ var state: PlantState
 var neutronics: Neutronics
 var reactivity_model: ReactivityModel
 var control_rods: ControlRods
+var thermal_model: ThermalModel
 var params: ReactorParams
 var reactivity_params: ReactivityParams
+var thermal_params: ThermalParams
 
-# Wejscia termiczne - w 1B na wartosciach referencyjnych (sprzezenia = 0 do 1C).
+# Stan cieplny CACHE - aktualizowany przez ThermalModel na koncu kazdego kroku,
+# czytany przez bilans reaktywnosci w NASTEPNYM kroku (sprzezenie z opoznieniem 1 kroku).
 var _fuel_temp: float = 0.0
 var _coolant_temp: float = 0.0
 var _void_fraction: float = 0.0
+var _coolant_flow_fraction: float = 1.0    # wzgledny przeplyw chlodziwa 0..1 (1 = nominal)
 var _external_reactivity: float = 0.0      # bias zewnetrzny (scenariusze/testy)
 var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
 
@@ -42,21 +48,26 @@ var _rng: RandomNumberGenerator
 
 ## seed_value - ziarno determinizmu; opcjonalne zestawy stalych (domyslnie standardowe).
 func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
-		react_params: ReactivityParams = null) -> void:
+		react_params: ReactivityParams = null, therm_params: ThermalParams = null) -> void:
 	state = PlantState.new()
 	_rng = RandomNumberGenerator.new()
 	_rng.seed = seed_value
 
 	params = reactor_params if reactor_params != null else ReactorParams.new()
 	reactivity_params = react_params if react_params != null else ReactivityParams.new()
+	thermal_params = therm_params if therm_params != null else ThermalParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
+	thermal_model = ThermalModel.new(thermal_params)
 
-	# Wejscia termiczne startowo = referencja (sprzezenia neutralne).
-	_fuel_temp = reactivity_params.fuel_temp_ref
-	_coolant_temp = reactivity_params.coolant_temp_ref
-	_void_fraction = reactivity_params.void_ref
+	# Stan cieplny startowo = rownowaga dla n=1 przy pelnym przeplywie.
+	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
+	# czyli punkt ODNIESIENIA spojny z pozycja krytyczna pretow (sprzezenia ~0).
+	thermal_model.initialize_steady_state(1.0)
+	_fuel_temp = thermal_model.get_fuel_temp()
+	_coolant_temp = thermal_model.get_coolant_temp()
+	_void_fraction = thermal_model.get_void_fraction()
 
 	# Prety startuja na POZYCJI KRYTYCZNEJ przy referencji: rho calkowite = 0 przy n=1.
 	# Czynniki poza pretami w punkcie odniesienia sprowadzaja sie do excess_reactivity.
@@ -85,11 +96,14 @@ func scram() -> void:
 func set_external_reactivity(value: float) -> void:
 	_external_reactivity = value
 
-## Ustawia wejscia termiczne (do 1C zastapi to termohydraulika; przydatne w testach/scenariuszach).
-func set_thermal_inputs(fuel_temp: float, coolant_temp: float, void_fraction: float) -> void:
-	_fuel_temp = fuel_temp
-	_coolant_temp = coolant_temp
-	_void_fraction = void_fraction
+## Ustawia wzgledny przeplyw chlodziwa 0..1 (1 = nominalny). Spadek -> wrzenie -> void.
+## UPROSZCZENIE (1C): przeplyw skalarny, natychmiastowy; bezwladnosc pomp i obieg w 1C'.
+func set_coolant_flow(flow_fraction: float) -> void:
+	_coolant_flow_fraction = clampf(flow_fraction, 0.0, 1.0)
+
+## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
+func get_thermal_state() -> Array:
+	return [_fuel_temp, _coolant_temp, _void_fraction]
 
 
 ## Wykonuje JEDEN krok symulacji o staly FIXED_DT.
@@ -100,7 +114,8 @@ func step() -> void:
 	# 1) Kinematyka pretow.
 	control_rods.step(FIXED_DT)
 
-	# 2) Bilans reaktywnosci z aktualnego stanu.
+	# 2) Bilans reaktywnosci z aktualnego stanu. Stan cieplny pochodzi z KONCA
+	#    poprzedniego kroku (sprzezenie z opoznieniem 1 kroku) - patrz naglowek.
 	var inputs := ReactivityInputs.new()
 	inputs.rod_insertion = control_rods.get_insertion()
 	inputs.fuel_temp = _fuel_temp
@@ -110,8 +125,14 @@ func step() -> void:
 	inputs.external_reactivity = _external_reactivity
 	var rho := reactivity_model.total_reactivity(inputs)
 
-	# 3) Neutronika (kinetyka punktowa).
+	# 3) Neutronika (kinetyka punktowa) -> nowa moc.
 	neutronics.step(rho, FIXED_DT)
+
+	# 4) Termohydraulika reaguje na NOWA moc; wynik trafi do reaktywnosci nast. kroku.
+	thermal_model.step(neutronics.get_power_fraction(), _coolant_flow_fraction, FIXED_DT)
+	_fuel_temp = thermal_model.get_fuel_temp()
+	_coolant_temp = thermal_model.get_coolant_temp()
+	_void_fraction = thermal_model.get_void_fraction()
 
 	_sync_state(inputs)
 
@@ -121,6 +142,13 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.reactor_power_fraction = neutronics.get_power_fraction()
 	state.reactor_period_seconds = neutronics.get_reactor_period()
 	state.rod_insertion = control_rods.get_insertion()
+
+	# Stan cieplny (ETAP 1C).
+	state.fuel_temp = _fuel_temp
+	state.coolant_temp = _coolant_temp
+	state.void_fraction = _void_fraction
+	state.coolant_flow_fraction = _coolant_flow_fraction
+	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
 
 	if inputs == null:
 		inputs = ReactivityInputs.new()

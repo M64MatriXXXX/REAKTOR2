@@ -30,7 +30,14 @@ var rho_void: float = 0.0
 var rho_coolant: float = 0.0
 var rho_xenon: float = 0.0
 
-# UWAGA (ETAP 1C+): dojda pola termiki, cisnienia, frakcji pustek, ksenonu itd.
+# --- Termohydraulika (ETAP 1C) ---
+var fuel_temp: float = 0.0                # [K] temperatura paliwa
+var coolant_temp: float = 0.0             # [K] temperatura chlodziwa
+var void_fraction: float = 0.0            # [-] frakcja pustek 0..1
+var coolant_flow_fraction: float = 1.0    # [-] wzgledny przeplyw chlodziwa 0..1
+var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna
+
+# UWAGA (ETAP 1C'+): dojda pola obiegu (cisnienie, przeplyw masowy pomp), ksenonu itd.
 
 
 ## Zwraca slownik z pelnym stanem - podstawa save/load oraz synchronizacji sieciowej.
@@ -47,6 +54,11 @@ func to_dict() -> Dictionary:
 		"rho_void": rho_void,
 		"rho_coolant": rho_coolant,
 		"rho_xenon": rho_xenon,
+		"fuel_temp": fuel_temp,
+		"coolant_temp": coolant_temp,
+		"void_fraction": void_fraction,
+		"coolant_flow_fraction": coolant_flow_fraction,
+		"thermal_power_mw": thermal_power_mw,
 	}
 
 
@@ -63,6 +75,11 @@ func from_dict(data: Dictionary) -> void:
 	rho_void = data.get("rho_void", 0.0)
 	rho_coolant = data.get("rho_coolant", 0.0)
 	rho_xenon = data.get("rho_xenon", 0.0)
+	fuel_temp = data.get("fuel_temp", 0.0)
+	coolant_temp = data.get("coolant_temp", 0.0)
+	void_fraction = data.get("void_fraction", 0.0)
+	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
+	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 
 
 ## Gleboka kopia stanu (przydatna do snapshotow i testow regresji).
