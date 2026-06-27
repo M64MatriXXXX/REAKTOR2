@@ -18,6 +18,14 @@ extends RefCounted
 ##          (najpierw neutronika, potem termika) - prostsze i stabilne (bez iteracji
 ##          w obrebie kroku). Realny obieg pomp/zaworow/cisnienia dojdzie w 1C'.
 ##          Reaktorem steruja PRETY (set_rod_target / scram) + przeplyw + bias zewn.
+##
+## ETAP 1E-1: warstwa BEZPIECZENSTWA (RPS) niezalezna i NADRZEDNA nad sterowaniem.
+##          Po fizyce kazdego kroku: ProtectionSystem ocenia sygnaly AZ -> auto-SCRAM;
+##          FailureConditions sprawdza warunki przegranej -> latch awarii (stan zamrozony,
+##          dalsza ewolucja niefizyczna). Maszyna stanow gatekeeper przejsc; wyjscie ze
+##          SCRAM tylko recznie (reset_after_scram). Zabezpieczenia i awarie mozna wylaczyc
+##          (set_protection_enabled / set_failure_states_enabled) - tryb "Czarnobyl" / badanie
+##          surowej fizyki. Czas SCRAM realny i konfigurowalny (SafetyParams, ~18 s pre-1986).
 
 # Stala czestotliwosc kroku fizyki. 50 Hz -> dt = 0.02 s.
 const PHYSICS_HZ: float = 50.0
@@ -33,6 +41,12 @@ var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
 
+# Warstwa bezpieczenstwa (ETAP 1E-1).
+var safety_params: SafetyParams
+var protection_system: ProtectionSystem
+var failure_conditions: FailureConditions
+var state_machine: ReactorStateMachine
+
 # Stan cieplny CACHE - aktualizowany przez ThermalModel na koncu kazdego kroku,
 # czytany przez bilans reaktywnosci w NASTEPNYM kroku (sprzezenie z opoznieniem 1 kroku).
 var _fuel_temp: float = 0.0
@@ -42,13 +56,21 @@ var _coolant_flow_fraction: float = 1.0    # wzgledny przeplyw chlodziwa 0..1 (1
 var _external_reactivity: float = 0.0      # bias zewnetrzny (scenariusze/testy)
 var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
 
+# Bezpieczenstwo (ETAP 1E-1).
+var _manual_az5: bool = false              # zatrzasniety przycisk operatora AZ-5
+var _protection_enabled: bool = true       # RPS uzbrojony (false = tryb "Czarnobyl")
+var _failure_states_enabled: bool = true   # warunki przegranej aktywne (false = surowa fizyka)
+var _failure: int = 0                       # FailureConditions.Type (0 = NONE); !=0 zamraza sim
+var _event_log: Array[String] = []         # log zdarzen (alarmy/SCRAM/awaria) dla UI (ETAP 2)
+
 var _time_accumulator: float = 0.0
 var _rng: RandomNumberGenerator
 
 
 ## seed_value - ziarno determinizmu; opcjonalne zestawy stalych (domyslnie standardowe).
 func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
-		react_params: ReactivityParams = null, therm_params: ThermalParams = null) -> void:
+		react_params: ReactivityParams = null, therm_params: ThermalParams = null,
+		safe_params: SafetyParams = null) -> void:
 	state = PlantState.new()
 	_rng = RandomNumberGenerator.new()
 	_rng.seed = seed_value
@@ -56,10 +78,14 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	params = reactor_params if reactor_params != null else ReactorParams.new()
 	reactivity_params = react_params if react_params != null else ReactivityParams.new()
 	thermal_params = therm_params if therm_params != null else ThermalParams.new()
+	safety_params = safe_params if safe_params != null else SafetyParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
 	thermal_model = ThermalModel.new(thermal_params)
+	protection_system = ProtectionSystem.new(safety_params)
+	failure_conditions = FailureConditions.new(safety_params)
+	state_machine = ReactorStateMachine.new()
 
 	# Stan cieplny startowo = rownowaga dla n=1 przy pelnym przeplywie.
 	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
@@ -71,11 +97,13 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 
 	# Prety startuja na POZYCJI KRYTYCZNEJ przy referencji: rho calkowite = 0 przy n=1.
 	# Czynniki poza pretami w punkcie odniesienia sprowadzaja sie do excess_reactivity.
+	# Predkosc SCRAM z SafetyParams (realny czas, ~18 s pre-1986), nie z 1B.
 	var critical_insertion := reactivity_model.critical_rod_insertion(
 		reactivity_params.excess_reactivity)
+	var scram_speed := 1.0 / safety_params.scram_full_insertion_time_s
 	control_rods = ControlRods.new(
 		reactivity_params.rod_speed_normal,
-		reactivity_params.rod_speed_scram,
+		scram_speed,
 		critical_insertion)
 
 	neutronics.initialize_steady_state(1.0)
@@ -88,9 +116,42 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 func set_rod_target(insertion: float) -> void:
 	control_rods.set_target(insertion)
 
-## Awaryjne wsuniecie pretow (AZ-5).
+## Manualne awaryjne wylaczenie (przycisk AZ-5). Zatrzasniete (RPS nadrzedny).
 func scram() -> void:
-	control_rods.scram()
+	_manual_az5 = true
+	_trigger_scram([TripSignal.Type.MANUAL_AZ5])
+
+## Uzbrojenie/rozbrojenie RPS (auto-SCRAM). false = tryb "Czarnobyl" (zabezpieczenia obejscia).
+func set_protection_enabled(enabled: bool) -> void:
+	_protection_enabled = enabled
+
+## Wlaczenie/wylaczenie warunkow przegranej. false = badanie surowej fizyki bez konca gry.
+func set_failure_states_enabled(enabled: bool) -> void:
+	_failure_states_enabled = enabled
+
+## Reczny reset po SCRAM do SHUTDOWN (jedyne wyjscie ze SCRAM). Zwraca true, jesli wykonano.
+func reset_after_scram() -> bool:
+	if not state_machine.reset_to_shutdown():
+		return false
+	_manual_az5 = false
+	_log("Reset po SCRAM -> SHUTDOWN")
+	return true
+
+## Operatorskie zadanie przejscia stanu (PCS). Zwraca true, jesli legalne i wykonane.
+func request_state(target: int) -> bool:
+	return state_machine.request(target, _start_interlocks_ok())
+
+func get_reactor_state() -> int:
+	return state_machine.get_state()
+
+func is_failed() -> bool:
+	return _failure != FailureConditions.Type.NONE
+
+func get_failure() -> int:
+	return _failure
+
+func get_event_log() -> Array[String]:
+	return _event_log.duplicate()
 
 ## Bias reaktywnosci zewnetrznej (scenariusze/eksperymenty/testy).
 func set_external_reactivity(value: float) -> void:
@@ -108,6 +169,11 @@ func get_thermal_state() -> Array:
 
 ## Wykonuje JEDEN krok symulacji o staly FIXED_DT.
 func step() -> void:
+	# Po wykryciu awarii stan jest ZAMROZONY - dalsza ewolucja bylaby niefizyczna
+	# (np. "stabilizacja" rdzenia powyzej temperatury topnienia paliwa). Gra zakonczona.
+	if _failure != FailureConditions.Type.NONE:
+		return
+
 	state.tick += 1
 	state.sim_time_seconds += FIXED_DT
 
@@ -136,6 +202,9 @@ func step() -> void:
 
 	_sync_state(inputs)
 
+	# 5) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
+	_evaluate_safety()
+
 
 ## Przepisuje wynik modeli fizycznych do serializowalnego PlantState (kanal dla UI/sieci).
 func _sync_state(inputs: ReactivityInputs = null) -> void:
@@ -149,6 +218,10 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.void_fraction = _void_fraction
 	state.coolant_flow_fraction = _coolant_flow_fraction
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
+
+	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
+	state.clad_temp = failure_conditions.clad_temp(state)
+	state.reactor_state = state_machine.get_state()
 
 	if inputs == null:
 		inputs = ReactivityInputs.new()
@@ -168,12 +241,66 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.rho_xenon = breakdown["xenon"]
 
 
+## Warstwa bezpieczenstwa po fizyce kroku (ETAP 1E-1).
+## 1) RPS (jesli uzbrojony): aktywne sygnaly AZ -> auto-SCRAM.
+## 2) Warunki przegranej (jesli wlaczone): pierwsza awaria zamraza symulacje.
+func _evaluate_safety() -> void:
+	# 1) Sygnaly AZ. Manualny AZ-5 liczy sie zawsze; pozostale tylko przy uzbrojonym RPS.
+	var trips: Array[int] = []
+	if _protection_enabled:
+		trips = protection_system.evaluate(state, _manual_az5)
+	elif _manual_az5:
+		trips.append(TripSignal.Type.MANUAL_AZ5)
+	state.active_trips = trips
+
+	if not trips.is_empty():
+		_trigger_scram(trips)
+
+	# 2) Warunki przegranej.
+	if _failure_states_enabled:
+		var f := failure_conditions.check(state)
+		if f != FailureConditions.Type.NONE:
+			_failure = f
+			state.failure_state = f
+			state.failure_cause = FailureConditions.describe(f)
+			_log("AWARIA: %s (T_paliwa=%.0fK, moc=%.2f, void=%.2f)" % [
+				state.failure_cause, state.fuel_temp,
+				state.reactor_power_fraction, state.void_fraction])
+
+
+## Wymusza SCRAM (RPS lub manual). Loguje przyczyne raz, przy nowym wejsciu w stan SCRAM.
+func _trigger_scram(causes: Array[int]) -> void:
+	if state_machine.trigger_scram():
+		var names: Array[String] = []
+		for c in causes:
+			names.append(TripSignal.describe(c))
+		_log("SCRAM (AZ): " + ", ".join(names))
+	control_rods.scram()
+
+
+## Warunki wstepne startu (SHUTDOWN->STARTUP). 1E-1: przeplyw, RPS, brak awarii.
+## ORM i cisnienie dojda jako dodatkowe interlocki w 1E-3 / 1C'.
+func _start_interlocks_ok() -> bool:
+	if _failure != FailureConditions.Type.NONE:
+		return false
+	if not _protection_enabled:
+		return false
+	return _coolant_flow_fraction >= safety_params.low_flow_trip_fraction
+
+
+func _log(message: String) -> void:
+	_event_log.append("[t=%.2fs] %s" % [state.sim_time_seconds, message])
+
+
 ## Posuwa symulacje o zadany realny czas, dzielac go na stale kroki FIXED_DT.
 ## Trwaly akumulator gwarantuje niezaleznosc fizyki od FPS i to, ze reszta czasu
 ## nie ginie, lecz przenosi sie do kolejnego wywolania (poprawnosc + brak dryfu).
 ## Epsilon kompensuje to, ze 0.02 s nie jest dokladnie reprezentowalne w double.
 ## Zwraca liczbe wykonanych krokow.
 func advance(real_delta_seconds: float) -> int:
+	# Po awarii stan jest zamrozony - czas nie plynie (gra zakonczona).
+	if _failure != FailureConditions.Type.NONE:
+		return 0
 	var steps := 0
 	_time_accumulator += real_delta_seconds
 	while _time_accumulator >= FIXED_DT - _ACCUMULATOR_EPSILON:

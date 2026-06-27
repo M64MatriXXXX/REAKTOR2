@@ -20,7 +20,11 @@ func test_nominal_start_holds_steady() -> void:
 func test_doppler_damps_impulse_at_nominal() -> void:
 	# Realne sprzezenie (zastepuje kwazi-statyczny model z testu 1B):
 	# +50 pcm w nominale -> Doppler grzeje paliwo i TLUMI ekskursje do ~1.08.
+	# Badamy sama fizyke tlumienia: RPS rozbrojony (inaczej period-trip na skoku impulsu
+	# nuisance-scramuje; to artefakt skokowego impulsu testowego, nie ruchu pretow).
 	var sim := Simulation.new(0)
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
 	sim.set_external_reactivity(0.0005)
 	sim.advance(120.0)
 	var p := sim.state.reactor_power_fraction
@@ -35,7 +39,10 @@ func test_doppler_damps_impulse_at_nominal() -> void:
 func test_low_flow_triggers_void_and_power_excursion() -> void:
 	# Spadek przeplywu -> wrzenie -> DODATNI wklad pustkowy przewaza -> ekskursja mocy.
 	# To realny odpowiednik "dodatniego power coefficient" z testu 1B.
+	# Badamy SUROWA fizyke - bez RPS i bez konca gry (te przechwyca 1E-1).
 	var sim := Simulation.new(0)
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
 	sim.set_coolant_flow(0.5)
 	sim.advance(60.0)
 	assert_gt(sim.state.void_fraction, 0.0, "Niski przeplyw -> wrzenie (pustki)")
@@ -47,9 +54,13 @@ func test_low_flow_triggers_void_and_power_excursion() -> void:
 func test_low_flow_more_sensitive_than_nominal() -> void:
 	# Ten sam maly impuls: nominal tlumiony, niski przeplyw silnie wzmocniony.
 	var sim_nom := Simulation.new(0)
+	sim_nom.set_protection_enabled(false)
+	sim_nom.set_failure_states_enabled(false)
 	sim_nom.set_external_reactivity(0.0005)
 	sim_nom.advance(60.0)
 	var sim_low := Simulation.new(0)
+	sim_low.set_protection_enabled(false)
+	sim_low.set_failure_states_enabled(false)
 	sim_low.set_coolant_flow(0.5)
 	sim_low.set_external_reactivity(0.0005)
 	sim_low.advance(60.0)
@@ -69,6 +80,8 @@ func test_void_feedback_loop_no_sustained_oscillation() -> void:
 	#  - ustala sie do nowej rownowagi,
 	#  - po wygasnieciu ekskursji (t>40 s) jest monotoniczny (brak dzwonienia).
 	var sim := Simulation.new(0)
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
 	sim.set_coolant_flow(0.5)
 	var powers: Array[float] = []
 	var steps := int(round(250.0 / Simulation.FIXED_DT))
@@ -102,11 +115,14 @@ func test_void_feedback_loop_no_sustained_oscillation() -> void:
 
 func test_scram_recovers_from_low_flow_excursion() -> void:
 	# Po ekskursji niskoprzeplywowej SCRAM wsuwa prety i sprowadza moc w dol.
+	# Surowa fizyka (bez auto-RPS i konca gry), by zbadac sam efekt SCRAM na ekskursje.
 	var sim := Simulation.new(0)
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
 	sim.set_coolant_flow(0.5)
 	sim.advance(30.0)
 	var peak := sim.state.reactor_power_fraction
 	sim.scram()
-	sim.advance(30.0)
+	sim.advance(60.0)
 	assert_lt(sim.state.reactor_power_fraction, peak,
 		"SCRAM redukuje moc po ekskursji (prety przewazaja dodatni void)")

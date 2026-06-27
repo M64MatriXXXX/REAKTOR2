@@ -33,9 +33,16 @@ var rho_xenon: float = 0.0
 # --- Termohydraulika (ETAP 1C) ---
 var fuel_temp: float = 0.0                # [K] temperatura paliwa
 var coolant_temp: float = 0.0             # [K] temperatura chlodziwa
+var clad_temp: float = 0.0                # [K] temperatura koszulki (proxy, ETAP 1E)
 var void_fraction: float = 0.0            # [-] frakcja pustek 0..1
 var coolant_flow_fraction: float = 1.0    # [-] wzgledny przeplyw chlodziwa 0..1
 var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna
+
+# --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
+var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
+var active_trips: Array[int] = []         # aktywne sygnaly AZ w tym kroku (TripSignal.Type)
+var failure_state: int = 0               # FailureConditions.Type (0 = NONE)
+var failure_cause: String = ""            # czytelny opis przyczyny przegranej
 
 # UWAGA (ETAP 1C'+): dojda pola obiegu (cisnienie, przeplyw masowy pomp), ksenonu itd.
 
@@ -56,9 +63,14 @@ func to_dict() -> Dictionary:
 		"rho_xenon": rho_xenon,
 		"fuel_temp": fuel_temp,
 		"coolant_temp": coolant_temp,
+		"clad_temp": clad_temp,
 		"void_fraction": void_fraction,
 		"coolant_flow_fraction": coolant_flow_fraction,
 		"thermal_power_mw": thermal_power_mw,
+		"reactor_state": reactor_state,
+		"active_trips": active_trips.duplicate(),
+		"failure_state": failure_state,
+		"failure_cause": failure_cause,
 	}
 
 
@@ -77,9 +89,16 @@ func from_dict(data: Dictionary) -> void:
 	rho_xenon = data.get("rho_xenon", 0.0)
 	fuel_temp = data.get("fuel_temp", 0.0)
 	coolant_temp = data.get("coolant_temp", 0.0)
+	clad_temp = data.get("clad_temp", 0.0)
 	void_fraction = data.get("void_fraction", 0.0)
 	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
+	reactor_state = data.get("reactor_state", 0)
+	active_trips.clear()
+	for t in data.get("active_trips", []):
+		active_trips.append(int(t))
+	failure_state = data.get("failure_state", 0)
+	failure_cause = data.get("failure_cause", "")
 
 
 ## Gleboka kopia stanu (przydatna do snapshotow i testow regresji).
