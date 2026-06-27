@@ -32,10 +32,10 @@ extends RefCounted
 
 var params: ThermalParams
 
-var _fuel_temp: float = 0.0       # [K]
-var _coolant_temp: float = 0.0    # [K]
-var _void_fraction: float = 0.0   # [-]
-var _last_power: float = 0.0      # ostatni n (diagnostyka)
+var _fuel_temp: float = 0.0          # [K]
+var _coolant_temp: float = 0.0       # [K]
+var _void_fraction: float = 0.0      # [-]
+var _last_heat_fraction: float = 0.0 # ostatni ulamek mocy CIEPLNEJ (prompt+decay)
 
 
 func _init(thermal_params: ThermalParams) -> void:
@@ -51,7 +51,7 @@ func _init(thermal_params: ThermalParams) -> void:
 ## Przy n=1 daje to (dla domyslnych stalych) T_c=550 K, T_f=800 K, void=0 -
 ## punkt odniesienia spojny z ReactivityParams (warunek startu nominalnego).
 func initialize_steady_state(power_fraction: float) -> void:
-	_last_power = power_fraction
+	_last_heat_fraction = power_fraction
 	var q := params.nominal_thermal_power * power_fraction
 	_coolant_temp = params.coolant_inlet_temp + q / params.coolant_flow_heat_rate_nominal
 	_fuel_temp = _coolant_temp + q / params.fuel_to_coolant_conductance
@@ -59,10 +59,11 @@ func initialize_steady_state(power_fraction: float) -> void:
 
 
 ## Jeden krok termiki o dlugosci dt.
-## power_fraction        - aktualny n z neutroniki,
+## heat_fraction         - ulamek mocy CIEPLNEJ (prompt*n + decay); n=1 -> ~1.0,
+##                         po SCRAM rozszczepienia gasna, ale decay daje podloge.
 ## coolant_flow_fraction - wzgledny przeplyw chlodziwa 0..1 (1 = nominalny).
-func step(power_fraction: float, coolant_flow_fraction: float, dt: float) -> void:
-	_last_power = power_fraction
+func step(heat_fraction: float, coolant_flow_fraction: float, dt: float) -> void:
+	_last_heat_fraction = heat_fraction
 	var ua := params.fuel_to_coolant_conductance
 	var w := params.coolant_flow_heat_rate_nominal * maxf(0.0, coolant_flow_fraction)
 	var cf_h := params.fuel_heat_capacity / dt
@@ -72,7 +73,7 @@ func step(power_fraction: float, coolant_flow_fraction: float, dt: float) -> voi
 	var a12 := -ua
 	var a21 := -ua
 	var a22 := cc_h + ua + w
-	var b1 := cf_h * _fuel_temp + params.nominal_thermal_power * power_fraction
+	var b1 := cf_h * _fuel_temp + params.nominal_thermal_power * heat_fraction
 	var b2 := cc_h * _coolant_temp + w * params.coolant_inlet_temp
 
 	var det := a11 * a22 - a12 * a21   # zawsze > 0 dla dodatnich stalych
@@ -98,6 +99,6 @@ func get_coolant_temp() -> float:
 func get_void_fraction() -> float:
 	return _void_fraction
 
-## Aktualna moc cieplna [W] (= P_nom * n).
+## Aktualna moc cieplna [W] (= P_nom * ulamek mocy cieplnej, prompt+decay).
 func get_thermal_power_watts() -> float:
-	return params.nominal_thermal_power * _last_power
+	return params.nominal_thermal_power * _last_heat_fraction

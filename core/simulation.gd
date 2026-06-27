@@ -37,6 +37,7 @@ var neutronics: Neutronics
 var reactivity_model: ReactivityModel
 var control_rods: ControlRods
 var thermal_model: ThermalModel
+var decay_heat: DecayHeat
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
@@ -83,6 +84,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
 	thermal_model = ThermalModel.new(thermal_params)
+	decay_heat = DecayHeat.new(thermal_params)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
@@ -91,6 +93,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
 	# czyli punkt ODNIESIENIA spojny z pozycja krytyczna pretow (sprzezenia ~0).
 	thermal_model.initialize_steady_state(1.0)
+	decay_heat.initialize_steady_state(1.0)
 	_fuel_temp = thermal_model.get_fuel_temp()
 	_coolant_temp = thermal_model.get_coolant_temp()
 	_void_fraction = thermal_model.get_void_fraction()
@@ -191,18 +194,25 @@ func step() -> void:
 	inputs.external_reactivity = _external_reactivity
 	var rho := reactivity_model.total_reactivity(inputs)
 
-	# 3) Neutronika (kinetyka punktowa) -> nowa moc.
+	# 3) Neutronika (kinetyka punktowa) -> nowa moc rozszczepien.
 	neutronics.step(rho, FIXED_DT)
+	var fission_power := neutronics.get_power_fraction()
 
-	# 4) Termohydraulika reaguje na NOWA moc; wynik trafi do reaktywnosci nast. kroku.
-	thermal_model.step(neutronics.get_power_fraction(), _coolant_flow_fraction, FIXED_DT)
+	# 4) Cieplo powylaczeniowe: rezerwuar produktow rozpadu (trwa po SCRAM).
+	decay_heat.step(fission_power, FIXED_DT)
+	# Calkowite cieplo = czesc prompt (z rozszczepien) + decay (z rozpadu).
+	var heat_fraction := thermal_params.prompt_heat_fraction * fission_power \
+		+ decay_heat.get_decay_power_fraction()
+
+	# 5) Termohydraulika reaguje na cieplo; wynik trafi do reaktywnosci nast. kroku.
+	thermal_model.step(heat_fraction, _coolant_flow_fraction, FIXED_DT)
 	_fuel_temp = thermal_model.get_fuel_temp()
 	_coolant_temp = thermal_model.get_coolant_temp()
 	_void_fraction = thermal_model.get_void_fraction()
 
 	_sync_state(inputs)
 
-	# 5) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
+	# 6) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
 	_evaluate_safety()
 
 
@@ -218,6 +228,7 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.void_fraction = _void_fraction
 	state.coolant_flow_fraction = _coolant_flow_fraction
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
+	state.decay_heat_fraction = decay_heat.get_decay_power_fraction()
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)

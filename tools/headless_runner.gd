@@ -46,7 +46,7 @@ func _initialize() -> void:
 	var scram_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,rho_coolant,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,clad_temp_k,void_fraction,thermal_power_mw,reactor_state,failure")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,rho_coolant,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,clad_temp_k,void_fraction,thermal_power_mw,decay_heat_fraction,reactor_state,failure")
 
 	for i in range(total_steps):
 		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
@@ -54,7 +54,7 @@ func _initialize() -> void:
 			scram_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.3f,%d,%d" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.3f,%.6f,%d,%d" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
 				sim.state.rod_insertion,
@@ -70,6 +70,7 @@ func _initialize() -> void:
 				sim.state.clad_temp,
 				sim.state.void_fraction,
 				sim.state.thermal_power_mw,
+				sim.state.decay_heat_fraction,
 				sim.state.reactor_state,
 				sim.state.failure_state,
 			])
@@ -83,9 +84,10 @@ func _initialize() -> void:
 		sim.state.sim_time_seconds, sim.state.rod_insertion, sim.state.reactivity,
 		sim.state.reactor_power_fraction, sim.state.reactor_period_seconds,
 		sim.state_machine.state_name()])
-	print("  termika: T_paliwa=%.1fK T_chlodziwa=%.1fK T_koszulki=%.1fK void=%.4f moc_cieplna=%.1fMW" % [
+	print("  termika: T_paliwa=%.1fK T_chlodziwa=%.1fK T_koszulki=%.1fK void=%.4f moc_cieplna=%.1fMW decay=%.2f%%" % [
 		sim.state.fuel_temp, sim.state.coolant_temp, sim.state.clad_temp,
-		sim.state.void_fraction, sim.state.thermal_power_mw])
+		sim.state.void_fraction, sim.state.thermal_power_mw,
+		sim.state.decay_heat_fraction * 100.0])
 	if sim.is_failed():
 		print("  PRZEGRANA: %s" % sim.state.failure_cause)
 	var log := sim.get_event_log()

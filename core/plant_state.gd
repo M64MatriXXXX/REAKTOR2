@@ -36,7 +36,8 @@ var coolant_temp: float = 0.0             # [K] temperatura chlodziwa
 var clad_temp: float = 0.0                # [K] temperatura koszulki (proxy, ETAP 1E)
 var void_fraction: float = 0.0            # [-] frakcja pustek 0..1
 var coolant_flow_fraction: float = 1.0    # [-] wzgledny przeplyw chlodziwa 0..1
-var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna
+var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna (prompt+decay)
+var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
 var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
@@ -67,6 +68,7 @@ func to_dict() -> Dictionary:
 		"void_fraction": void_fraction,
 		"coolant_flow_fraction": coolant_flow_fraction,
 		"thermal_power_mw": thermal_power_mw,
+		"decay_heat_fraction": decay_heat_fraction,
 		"reactor_state": reactor_state,
 		"active_trips": active_trips.duplicate(),
 		"failure_state": failure_state,
@@ -93,6 +95,7 @@ func from_dict(data: Dictionary) -> void:
 	void_fraction = data.get("void_fraction", 0.0)
 	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
+	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
 	reactor_state = data.get("reactor_state", 0)
 	active_trips.clear()
 	for t in data.get("active_trips", []):

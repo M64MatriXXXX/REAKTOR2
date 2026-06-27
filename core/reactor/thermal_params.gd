@@ -43,6 +43,24 @@ extends Resource
 # Gorne ograniczenie frakcji pustek [-].
 @export var void_fraction_max: float = 1.0
 
+# --- Cieplo powylaczeniowe (decay heat) - ETAP 1E-2 ---
+# Moc cieplna rdzenia dzieli sie na czesc PROMPT (deponowana natychmiast z rozszczepien)
+# i czesc DECAY (rozpad produktow rozszczepienia, trwa PO wylaczeniu reakcji lancuchowej).
+# Przy n=1 w rownowadze: prompt + sum(decay) = 1.0 (kalibracja 800/550 zachowana).
+# Ulamek mocy z rozpadu (decay) w rownowadze ~ 6.6% (RBMK/typowy LWR).
+@export var prompt_heat_fraction: float = 0.934      # 1 - sum(decay_equilibrium_fraction)
+
+# Model rezerwuarowy (kilka grup) jako fit przyblizenia Way-Wigner ~0.066*t^-0.2.
+# UPROSZCZENIE: 3 grupy zamiast pelnego widma ~23 grup ANS; dobrane, by oddac
+# przebieg od sekund do godzin (istotny dla mechaniki chlodzenia po SCRAM).
+# dE_i/dt = (f_i)*n - lambda_i*E_i ; w rownowadze E_i = decay_equilibrium_fraction_i * n.
+@export var decay_lambda: PackedFloat64Array = PackedFloat64Array([
+	0.5, 0.01, 0.0001,   # [1/s]: szybka (~2s), srednia (~100s), wolna (~2.8h)
+])
+@export var decay_equilibrium_fraction: PackedFloat64Array = PackedFloat64Array([
+	0.020, 0.025, 0.021,   # [-] wklad grupy do mocy przy n=1 (suma = 0.066)
+])
+
 
 ## Walidacja - wolana w _init ThermalModel.
 func validate() -> void:
@@ -54,3 +72,13 @@ func validate() -> void:
 	assert(coolant_heat_capacity > 0.0, "ThermalParams: coolant_heat_capacity musi byc > 0")
 	assert(void_gain_per_kelvin >= 0.0, "ThermalParams: void_gain_per_kelvin musi byc >= 0")
 	assert(void_fraction_max > 0.0, "ThermalParams: void_fraction_max musi byc > 0")
+	assert(decay_lambda.size() == decay_equilibrium_fraction.size(),
+		"ThermalParams: decay_lambda i decay_equilibrium_fraction musza miec ta sama dlugosc")
+	for l in decay_lambda:
+		assert(l > 0.0, "ThermalParams: kazda decay_lambda musi byc > 0")
+	var decay_sum := 0.0
+	for f in decay_equilibrium_fraction:
+		assert(f >= 0.0, "ThermalParams: decay_equilibrium_fraction musi byc >= 0")
+		decay_sum += f
+	assert(absf(prompt_heat_fraction + decay_sum - 1.0) < 1.0e-6,
+		"ThermalParams: prompt_heat_fraction + sum(decay) musi = 1.0 (kalibracja mocy)")
