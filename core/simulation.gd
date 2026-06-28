@@ -38,9 +38,11 @@ var reactivity_model: ReactivityModel
 var control_rods: ControlRods
 var thermal_model: ThermalModel
 var decay_heat: DecayHeat
+var main_pumps: MainCirculationPumps
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
+var pump_params: PumpParams
 
 # Warstwa bezpieczenstwa (ETAP 1E-1).
 var safety_params: SafetyParams
@@ -54,7 +56,11 @@ var orm_model: ORM
 var _fuel_temp: float = 0.0
 var _coolant_temp: float = 0.0
 var _void_fraction: float = 0.0
-var _coolant_flow_fraction: float = 1.0    # wzgledny przeplyw chlodziwa 0..1 (1 = nominal)
+var _coolant_flow_fraction: float = 1.0    # wzgledny przeplyw chlodziwa 0..1 (zrodlo: pompy lub override)
+# Tryb przeplywu (ETAP 2A): domyslnie z pomp ГЦН. set_coolant_flow() przelacza w jawny
+# TRYB MANUALNY (override) - dla testow/scenariuszy ETAPU 1; UI ma jasno widziec zrodlo.
+var _manual_flow_override: bool = false
+var _manual_flow_value: float = 1.0
 var _external_reactivity: float = 0.0      # bias zewnetrzny (scenariusze/testy)
 var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
 
@@ -84,15 +90,20 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	reactivity_params = react_params if react_params != null else ReactivityParams.new()
 	thermal_params = therm_params if therm_params != null else ThermalParams.new()
 	safety_params = safe_params if safe_params != null else SafetyParams.new()
+	pump_params = PumpParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
 	thermal_model = ThermalModel.new(thermal_params)
 	decay_heat = DecayHeat.new(thermal_params)
+	main_pumps = MainCirculationPumps.new(pump_params)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
 	orm_model = ORM.new(safety_params)
+
+	# Przeplyw startowy z pomp w konfiguracji nominalnej (6 czynnych -> 1.0).
+	_coolant_flow_fraction = main_pumps.get_flow_fraction()
 
 	# Stan cieplny startowo = rownowaga dla n=1 przy pelnym przeplywie.
 	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
@@ -166,10 +177,33 @@ func get_event_log() -> Array[String]:
 func set_external_reactivity(value: float) -> void:
 	_external_reactivity = value
 
-## Ustawia wzgledny przeplyw chlodziwa 0..1 (1 = nominalny). Spadek -> wrzenie -> void.
-## UPROSZCZENIE (1C): przeplyw skalarny, natychmiastowy; bezwladnosc pomp i obieg w 1C'.
+## Wymusza przeplyw chlodziwa 0..1 w jawnym TRYBIE MANUALNYM (override pomp ГЦН).
+## Uzywane przez scenariusze/testy ETAPU 1; pompy sa wtedy pomijane jako zrodlo przeplywu.
+## UPROSZCZENIE: bezposrednie zadanie przeplywu, bez bezwladnosci (ta jest w modelu pomp).
 func set_coolant_flow(flow_fraction: float) -> void:
-	_coolant_flow_fraction = clampf(flow_fraction, 0.0, 1.0)
+	_manual_flow_override = true
+	_manual_flow_value = clampf(flow_fraction, 0.0, 1.0)
+
+## Powrot do przeplywu sterowanego POMPAMI (wyjscie z trybu manualnego).
+func use_pump_flow() -> void:
+	_manual_flow_override = false
+
+## Czy przeplyw pochodzi z trybu manualnego (override), czy z pomp (UI: zrodlo przeplywu).
+func is_manual_flow() -> bool:
+	return _manual_flow_override
+
+# --- Sterowanie pompami ГЦН (ETAP 2A) ---
+## Komenda zasilania pompy i (true = wlacz).
+func set_pump_running(index: int, running: bool) -> void:
+	main_pumps.set_pump_running(index, running)
+
+## Awaria (zaciecie) pompy i.
+func fail_pump(index: int) -> void:
+	main_pumps.fail_pump(index)
+
+## Ustawia liczbe czynnych pomp (pierwsze n wlaczone).
+func set_pump_running_count(n: int) -> void:
+	main_pumps.set_running_count(n)
 
 ## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
 func get_thermal_state() -> Array:
@@ -217,7 +251,12 @@ func step() -> void:
 	var heat_fraction := thermal_params.prompt_heat_fraction * fission_power \
 		+ decay_heat.get_decay_power_fraction()
 
-	# 5) Termohydraulika reaguje na cieplo; wynik trafi do reaktywnosci nast. kroku.
+	# 5) Pompy ГЦН (bezwladnosc) -> przeplyw chlodziwa. Tryb manualny ma pierwszenstwo.
+	main_pumps.step(FIXED_DT)
+	_coolant_flow_fraction = _manual_flow_value if _manual_flow_override \
+		else main_pumps.get_flow_fraction()
+
+	# 6) Termohydraulika reaguje na cieplo; wynik trafi do reaktywnosci nast. kroku.
 	thermal_model.step(heat_fraction, _coolant_flow_fraction, FIXED_DT)
 	_fuel_temp = thermal_model.get_fuel_temp()
 	_coolant_temp = thermal_model.get_coolant_temp()
@@ -225,7 +264,7 @@ func step() -> void:
 
 	_sync_state(inputs)
 
-	# 6) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
+	# 7) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
 	_evaluate_safety()
 
 
@@ -240,6 +279,7 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.coolant_temp = _coolant_temp
 	state.void_fraction = _void_fraction
 	state.coolant_flow_fraction = _coolant_flow_fraction
+	state.pumps_running = main_pumps.running_count()
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
 	state.decay_heat_fraction = decay_heat.get_decay_power_fraction()
 	state.orm_equivalent_rods = _orm_equivalent

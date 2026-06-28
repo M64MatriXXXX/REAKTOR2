@@ -37,6 +37,7 @@ var coolant_temp: float = 0.0             # [K] temperatura chlodziwa
 var clad_temp: float = 0.0                # [K] temperatura koszulki (proxy, ETAP 1E)
 var void_fraction: float = 0.0            # [-] frakcja pustek 0..1
 var coolant_flow_fraction: float = 1.0    # [-] wzgledny przeplyw chlodziwa 0..1
+var pumps_running: int = 0                # liczba czynnych pomp ГЦН (ETAP 2A)
 var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna (prompt+decay)
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
@@ -70,6 +71,7 @@ func to_dict() -> Dictionary:
 		"clad_temp": clad_temp,
 		"void_fraction": void_fraction,
 		"coolant_flow_fraction": coolant_flow_fraction,
+		"pumps_running": pumps_running,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
 		"orm_equivalent_rods": orm_equivalent_rods,
@@ -99,6 +101,7 @@ func from_dict(data: Dictionary) -> void:
 	clad_temp = data.get("clad_temp", 0.0)
 	void_fraction = data.get("void_fraction", 0.0)
 	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
+	pumps_running = data.get("pumps_running", 0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
