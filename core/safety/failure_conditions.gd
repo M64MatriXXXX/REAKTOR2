@@ -37,9 +37,10 @@ func check(state: PlantState) -> int:
 		return Type.FUEL_MELTDOWN
 	if state.reactor_power_fraction >= params.power_runaway_fraction:
 		return Type.POWER_RUNAWAY
+	if state.pressure_mpa >= params.pressure_rupture_mpa:
+		return Type.CIRCUIT_RUPTURE
 	if clad_temp(state) >= params.clad_failure_temp_k:
 		return Type.CLAD_FAILURE
-	# HAK: CIRCUIT_RUPTURE (cisnienie) - 1C'.
 	return Type.NONE
 
 

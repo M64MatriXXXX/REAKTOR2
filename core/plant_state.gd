@@ -39,6 +39,11 @@ var void_fraction: float = 0.0            # [-] frakcja pustek 0..1
 var coolant_flow_fraction: float = 1.0    # [-] wzgledny przeplyw chlodziwa 0..1
 var pumps_running: int = 0                # liczba czynnych pomp ГЦН (ETAP 2A)
 var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna (prompt+decay)
+
+# --- Separatory / obieg parowy (ETAP 2B) ---
+var pressure_mpa: float = 0.0             # [MPa] cisnienie obiegu (separatory)
+var steam_quality: float = 0.0            # [-] jakosc pary na wylocie separatora (~0.15)
+var steam_dump_flow: float = 0.0          # [-] strumien zrzutu pary (BRU)
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
@@ -72,6 +77,9 @@ func to_dict() -> Dictionary:
 		"void_fraction": void_fraction,
 		"coolant_flow_fraction": coolant_flow_fraction,
 		"pumps_running": pumps_running,
+		"pressure_mpa": pressure_mpa,
+		"steam_quality": steam_quality,
+		"steam_dump_flow": steam_dump_flow,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
 		"orm_equivalent_rods": orm_equivalent_rods,
@@ -102,6 +110,9 @@ func from_dict(data: Dictionary) -> void:
 	void_fraction = data.get("void_fraction", 0.0)
 	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
 	pumps_running = data.get("pumps_running", 0)
+	pressure_mpa = data.get("pressure_mpa", 0.0)
+	steam_quality = data.get("steam_quality", 0.0)
+	steam_dump_flow = data.get("steam_dump_flow", 0.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)

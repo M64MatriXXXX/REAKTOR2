@@ -36,12 +36,22 @@ var _fuel_temp: float = 0.0          # [K]
 var _coolant_temp: float = 0.0       # [K]
 var _void_fraction: float = 0.0      # [-]
 var _last_heat_fraction: float = 0.0 # ostatni ulamek mocy CIEPLNEJ (prompt+decay)
+# Aktualna temperatura nasycenia [K] - domyslnie stala z params (ETAP 1C); od 2B
+# zmienna z cisnieniem separatorow (T_sat(P), wpinane z opoznieniem 1 kroku w Simulation).
+var _saturation_temp: float = 0.0
 
 
 func _init(thermal_params: ThermalParams) -> void:
 	params = thermal_params
 	params.validate()
+	_saturation_temp = params.saturation_temp
 	initialize_steady_state(1.0)
+
+
+## Ustawia biezaca temperature nasycenia (z cisnienia separatorow, ETAP 2B).
+## Domyslnie (bez wywolania) pozostaje stala params.saturation_temp - testy 1C bez zmian.
+func set_saturation_temp(saturation_temp: float) -> void:
+	_saturation_temp = saturation_temp
 
 
 ## Ustawia rownowage cieplna (dT/dt = 0) dla zadanej mocy przy PELNYM przeplywie.
@@ -83,8 +93,9 @@ func step(heat_fraction: float, coolant_flow_fraction: float, dt: float) -> void
 
 
 ## Frakcja pustek z temperatury chlodziwa (prog nasycenia + liniowy wzrost, obciety).
+## Prog = biezaca T_sat (stala w 1C; zalezna od cisnienia od 2B).
 func _compute_void(coolant_temp: float) -> float:
-	var superheat := coolant_temp - params.saturation_temp
+	var superheat := coolant_temp - _saturation_temp
 	if superheat <= 0.0:
 		return 0.0
 	return minf(params.void_fraction_max, params.void_gain_per_kelvin * superheat)

@@ -21,6 +21,7 @@ const AUTO_TRIPS: Array[int] = [
 	TripSignal.Type.VOID,
 	TripSignal.Type.LOW_FLOW,
 	TripSignal.Type.LOW_ORM,
+	TripSignal.Type.PRESSURE,
 ]
 const _CONFIRM_EPSILON: float = 1.0e-9
 
@@ -62,7 +63,9 @@ func evaluate_raw(state: PlantState, manual_az5: bool) -> Array[int]:
 			and state.orm_equivalent_rods < params.orm_trip_equivalent_rods:
 		trips.append(TripSignal.Type.LOW_ORM)
 
-	# HAK: PRESSURE (1C') - dodane, gdy obieg bedzie gotowy.
+	# Wysokie cisnienie obiegu (separatory, ETAP 2B).
+	if state.pressure_mpa > params.pressure_trip_mpa:
+		trips.append(TripSignal.Type.PRESSURE)
 
 	if manual_az5:
 		trips.append(TripSignal.Type.MANUAL_AZ5)

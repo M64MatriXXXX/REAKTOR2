@@ -103,8 +103,10 @@ func test_emergent_chernobyl_pre1986_fails_post1986_safe() -> void:
 	assert_lt(post.state.reactor_power_fraction, 0.1, "POST-1986: reaktor wygaszony")
 
 
-func test_chernobyl_failure_chain_is_power_or_thermal() -> void:
-	# Awaria to skutek rozbiegania/przegrzania (lancuch fizyczny), nie dowolny stan.
+func test_chernobyl_failure_chain_is_power_thermal_or_rupture() -> void:
+	# Awaria to skutek rozbiegania/przegrzania/eksplozji parowej (lancuch fizyczny),
+	# nie dowolny stan. Po wpieciu cisnienia (2B) scenariusz moze sie zakonczyc rowniez
+	# ROZERWANIEM OBIEGU (eksplozja parowa - fizycznie najtrafniejsza dla Czarnobyla).
 	var pre := _chernobyl_sim(SafetyParams.pre_1986())
 	pre.advance(28.0)
 	pre.scram()
@@ -113,5 +115,6 @@ func test_chernobyl_failure_chain_is_power_or_thermal() -> void:
 	assert_true(
 		f == FailureConditions.Type.POWER_RUNAWAY \
 		or f == FailureConditions.Type.FUEL_MELTDOWN \
-		or f == FailureConditions.Type.CLAD_FAILURE,
-		"Przyczyna: rozbieganie mocy / meltdown / uszkodzenie koszulki")
+		or f == FailureConditions.Type.CLAD_FAILURE \
+		or f == FailureConditions.Type.CIRCUIT_RUPTURE,
+		"Przyczyna: rozbieganie mocy / meltdown / koszulka / rozerwanie obiegu")

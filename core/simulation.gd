@@ -39,10 +39,12 @@ var control_rods: ControlRods
 var thermal_model: ThermalModel
 var decay_heat: DecayHeat
 var main_pumps: MainCirculationPumps
+var steam_separators: SteamSeparators
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
 var pump_params: PumpParams
+var separator_params: SeparatorParams
 
 # Warstwa bezpieczenstwa (ETAP 1E-1).
 var safety_params: SafetyParams
@@ -91,12 +93,14 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	thermal_params = therm_params if therm_params != null else ThermalParams.new()
 	safety_params = safe_params if safe_params != null else SafetyParams.new()
 	pump_params = PumpParams.new()
+	separator_params = SeparatorParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
 	thermal_model = ThermalModel.new(thermal_params)
 	decay_heat = DecayHeat.new(thermal_params)
 	main_pumps = MainCirculationPumps.new(pump_params)
+	steam_separators = SteamSeparators.new(separator_params)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
@@ -104,6 +108,10 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 
 	# Przeplyw startowy z pomp w konfiguracji nominalnej (6 czynnych -> 1.0).
 	_coolant_flow_fraction = main_pumps.get_flow_fraction()
+	# Cisnienie startowe = nastawa separatorow. Sprzezenie P->void (T_sat) domyslnie OFF
+	# (dlug do globalnego strojenia) - bez niego T_sat pozostaje stale 558 K jak w 1C.
+	if separator_params.enable_void_coupling:
+		thermal_model.set_saturation_temp(steam_separators.saturation_temp())
 
 	# Stan cieplny startowo = rownowaga dla n=1 przy pelnym przeplywie.
 	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
@@ -205,6 +213,10 @@ func fail_pump(index: int) -> void:
 func set_pump_running_count(n: int) -> void:
 	main_pumps.set_running_count(n)
 
+## Utrata/przywrocenie odbioru pary (zrzut BRU). false -> cisnienie rosnie (ETAP 2B).
+func set_dump_available(available: bool) -> void:
+	steam_separators.set_dump_available(available)
+
 ## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
 func get_thermal_state() -> Array:
 	return [_fuel_temp, _coolant_temp, _void_fraction]
@@ -256,15 +268,22 @@ func step() -> void:
 	_coolant_flow_fraction = _manual_flow_value if _manual_flow_override \
 		else main_pumps.get_flow_fraction()
 
-	# 6) Termohydraulika reaguje na cieplo; wynik trafi do reaktywnosci nast. kroku.
+	# 6) Termohydraulika. Opcjonalne sprzezenie cisnienie->void (T_sat) z opoznieniem 1 kroku;
+	#    domyslnie OFF (dlug do globalnego strojenia) -> T_sat stale 558 K, fizyka void jak w 1C.
+	if separator_params.enable_void_coupling:
+		thermal_model.set_saturation_temp(steam_separators.saturation_temp())
 	thermal_model.step(heat_fraction, _coolant_flow_fraction, FIXED_DT)
 	_fuel_temp = thermal_model.get_fuel_temp()
 	_coolant_temp = thermal_model.get_coolant_temp()
 	_void_fraction = thermal_model.get_void_fraction()
 
+	# 7) Separatory: produkcja pary (~ moc cieplna) - odbior (zrzut) -> cisnienie obiegu.
+	#    Brak turbiny w 2B -> odbior zewnetrzny = 0 (turbina dojdzie w 2C).
+	steam_separators.step(heat_fraction, 0.0, FIXED_DT)
+
 	_sync_state(inputs)
 
-	# 7) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
+	# 8) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
 	_evaluate_safety()
 
 
@@ -283,6 +302,11 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
 	state.decay_heat_fraction = decay_heat.get_decay_power_fraction()
 	state.orm_equivalent_rods = _orm_equivalent
+
+	# Separatory / obieg parowy (ETAP 2B).
+	state.pressure_mpa = steam_separators.get_pressure()
+	state.steam_quality = steam_separators.steam_quality()
+	state.steam_dump_flow = steam_separators.get_dump_flow()
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)

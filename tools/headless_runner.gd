@@ -32,6 +32,8 @@ func _initialize() -> void:
 	var pump_trip_to: int = int(args.get("pump-trip-to", "0"))
 	# Zaciecie pompy 0 w chwili pump-seize-at [s] (nagly spadek). Ujemny = bez zdarzenia.
 	var pump_seize_at: float = float(args.get("pump-seize-at", "-1"))
+	# Utrata odbioru pary (zamkniecie zrzutu) w chwili dump-close-at [s] -> wzrost cisnienia.
+	var dump_close_at: float = float(args.get("dump-close-at", "-1"))
 	# Co ile krokow zapisywac wiersz (1 = kazdy krok). Domyslnie 5 -> 10 Hz zapisu.
 	var sample_every: int = int(args.get("sample", "5"))
 	# Uzbrojenie RPS (auto-SCRAM). 0 = tryb "Czarnobyl" (zabezpieczenia obejscia).
@@ -68,9 +70,10 @@ func _initialize() -> void:
 	var scram_done := false
 	var pump_trip_done := false
 	var pump_seize_done := false
+	var dump_close_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,rho_coolant,rho_positive_scram,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,clad_temp_k,void_fraction,coolant_flow,pumps_running,thermal_power_mw,decay_heat_fraction,orm_equiv_rods,reactor_state,failure")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,rho_coolant,rho_positive_scram,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,clad_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,thermal_power_mw,decay_heat_fraction,orm_equiv_rods,reactor_state,failure")
 
 	for i in range(total_steps):
 		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
@@ -82,9 +85,12 @@ func _initialize() -> void:
 		if pump_seize_at >= 0.0 and not pump_seize_done and sim.state.sim_time_seconds >= pump_seize_at:
 			sim.fail_pump(0)                            # zaciecie -> nagly spadek
 			pump_seize_done = true
+		if dump_close_at >= 0.0 and not dump_close_done and sim.state.sim_time_seconds >= dump_close_at:
+			sim.set_dump_available(false)               # utrata odbioru -> wzrost cisnienia
+			dump_close_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.3f,%.6f,%.2f,%d,%d" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.3f,%.6f,%.2f,%d,%d" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
 				sim.state.rod_insertion,
@@ -102,6 +108,8 @@ func _initialize() -> void:
 				sim.state.void_fraction,
 				sim.state.coolant_flow_fraction,
 				sim.state.pumps_running,
+				sim.state.pressure_mpa,
+				sim.state.steam_dump_flow,
 				sim.state.thermal_power_mw,
 				sim.state.decay_heat_fraction,
 				sim.state.orm_equivalent_rods,
@@ -127,6 +135,8 @@ func _initialize() -> void:
 	print("  pompy ГЦН: czynne=%d/%d przeplyw=%.3f (zrodlo: %s)" % [
 		sim.state.pumps_running, sim.pump_params.total_pumps(),
 		sim.state.coolant_flow_fraction, "manual" if sim.is_manual_flow() else "pompy"])
+	print("  separatory: cisnienie=%.3f MPa zrzut=%.3f jakosc_pary=%.2f" % [
+		sim.state.pressure_mpa, sim.state.steam_dump_flow, sim.state.steam_quality])
 	if sim.is_failed():
 		print("  PRZEGRANA: %s" % sim.state.failure_cause)
 	var log := sim.get_event_log()

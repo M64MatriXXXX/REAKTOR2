@@ -239,6 +239,7 @@ func test_meltdown_catches_low_flow_during_rise() -> void:
 	var sp := SafetyParams.new()
 	sp.clad_failure_temp_k = 1.0e9       # izolacja: tylko meltdown lapie
 	sp.power_runaway_fraction = 1.0e9
+	sp.pressure_rupture_mpa = 1.0e9      # izolacja: rozerwanie obiegu (2B) nie wyprzedza meltdownu
 	var sim := Simulation.new(0, null, null, null, sp)
 	sim.set_protection_enabled(false)
 	sim.set_coolant_flow(0.5)
