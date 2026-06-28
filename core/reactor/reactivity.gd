@@ -41,8 +41,10 @@ func doppler_temp_derivative(fuel_temp: float) -> float:
 
 
 ## Sprzezenie pustkowe (void) - dla RBMK DODATNIE.
-func void_reactivity(void_fraction: float) -> float:
-	return params.void_coeff * (void_fraction - params.void_ref)
+## coeff_multiplier - wzmocnienie efektywnego wsp. pustkowego (1.0 = bazowy).
+## Niski ORM podnosi mnoznik (1E-3): dodatnia petla nalozona na petle pustkowa.
+func void_reactivity(void_fraction: float, coeff_multiplier: float = 1.0) -> float:
+	return params.void_coeff * coeff_multiplier * (void_fraction - params.void_ref)
 
 
 ## Wspolczynnik temperaturowy chlodziwa (maly, znak wg konfiguracji).
@@ -54,10 +56,11 @@ func coolant_temp_reactivity(coolant_temp: float) -> float:
 func total_reactivity(inputs: ReactivityInputs) -> float:
 	return rod_reactivity(inputs.rod_insertion) \
 		+ doppler_reactivity(inputs.fuel_temp) \
-		+ void_reactivity(inputs.void_fraction) \
+		+ void_reactivity(inputs.void_fraction, inputs.void_coeff_multiplier) \
 		+ coolant_temp_reactivity(inputs.coolant_temp) \
 		+ inputs.xenon_reactivity \
 		+ inputs.external_reactivity \
+		+ inputs.positive_scram_reactivity \
 		+ params.excess_reactivity
 
 
@@ -66,7 +69,7 @@ func total_reactivity(inputs: ReactivityInputs) -> float:
 func reactivity_breakdown(inputs: ReactivityInputs) -> Dictionary:
 	var rods := rod_reactivity(inputs.rod_insertion)
 	var doppler := doppler_reactivity(inputs.fuel_temp)
-	var void_r := void_reactivity(inputs.void_fraction)
+	var void_r := void_reactivity(inputs.void_fraction, inputs.void_coeff_multiplier)
 	var coolant := coolant_temp_reactivity(inputs.coolant_temp)
 	return {
 		"rods": rods,
@@ -75,9 +78,11 @@ func reactivity_breakdown(inputs: ReactivityInputs) -> Dictionary:
 		"coolant": coolant,
 		"xenon": inputs.xenon_reactivity,
 		"external": inputs.external_reactivity,
+		"positive_scram": inputs.positive_scram_reactivity,
 		"excess": params.excess_reactivity,
 		"total": rods + doppler + void_r + coolant
-			+ inputs.xenon_reactivity + inputs.external_reactivity + params.excess_reactivity,
+			+ inputs.xenon_reactivity + inputs.external_reactivity
+			+ inputs.positive_scram_reactivity + params.excess_reactivity,
 	}
 
 

@@ -47,6 +47,7 @@ var safety_params: SafetyParams
 var protection_system: ProtectionSystem
 var failure_conditions: FailureConditions
 var state_machine: ReactorStateMachine
+var orm_model: ORM
 
 # Stan cieplny CACHE - aktualizowany przez ThermalModel na koncu kazdego kroku,
 # czytany przez bilans reaktywnosci w NASTEPNYM kroku (sprzezenie z opoznieniem 1 kroku).
@@ -63,6 +64,9 @@ var _protection_enabled: bool = true       # RPS uzbrojony (false = tryb "Czarno
 var _failure_states_enabled: bool = true   # warunki przegranej aktywne (false = surowa fizyka)
 var _failure: int = 0                       # FailureConditions.Type (0 = NONE); !=0 zamraza sim
 var _event_log: Array[String] = []         # log zdarzen (alarmy/SCRAM/awaria) dla UI (ETAP 2)
+var _orm_equivalent: float = 0.0           # ORM (rownowazne prety) - liczony co krok (1E-3)
+var _positive_scram_reactivity: float = 0.0 # dodatni impuls efektu scramu (1E-3b)
+var _scram_orm_deficit: float = 0.0        # deficyt ORM ZATRZASNIETY w chwili SCRAM (skala impulsu)
 
 var _time_accumulator: float = 0.0
 var _rng: RandomNumberGenerator
@@ -88,6 +92,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
+	orm_model = ORM.new(safety_params)
 
 	# Stan cieplny startowo = rownowaga dla n=1 przy pelnym przeplywie.
 	# Dla domyslnych stalych daje to T_paliwa=800 K, T_chlodziwa=550 K, void=0,
@@ -110,6 +115,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 		critical_insertion)
 
 	neutronics.initialize_steady_state(1.0)
+	_orm_equivalent = orm_model.equivalent_rods(control_rods.get_insertion())
 	_sync_state()
 
 
@@ -183,8 +189,13 @@ func step() -> void:
 	# 1) Kinematyka pretow.
 	control_rods.step(FIXED_DT)
 
+	# ORM z aktualnej pozycji pretow + efekt dodatniego scramu (1E-3).
+	_orm_equivalent = orm_model.equivalent_rods(control_rods.get_insertion())
+	_positive_scram_reactivity = _compute_positive_scram()
+
 	# 2) Bilans reaktywnosci z aktualnego stanu. Stan cieplny pochodzi z KONCA
 	#    poprzedniego kroku (sprzezenie z opoznieniem 1 kroku) - patrz naglowek.
+	#    Niski ORM wzmacnia efektywny wsp. pustkowy (dodatnia petla na petli void).
 	var inputs := ReactivityInputs.new()
 	inputs.rod_insertion = control_rods.get_insertion()
 	inputs.fuel_temp = _fuel_temp
@@ -192,6 +203,8 @@ func step() -> void:
 	inputs.void_fraction = _void_fraction
 	inputs.xenon_reactivity = _xenon_reactivity
 	inputs.external_reactivity = _external_reactivity
+	inputs.void_coeff_multiplier = orm_model.void_coeff_multiplier(_orm_equivalent)
+	inputs.positive_scram_reactivity = _positive_scram_reactivity
 	var rho := reactivity_model.total_reactivity(inputs)
 
 	# 3) Neutronika (kinetyka punktowa) -> nowa moc rozszczepien.
@@ -229,6 +242,7 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.coolant_flow_fraction = _coolant_flow_fraction
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
 	state.decay_heat_fraction = decay_heat.get_decay_power_fraction()
+	state.orm_equivalent_rods = _orm_equivalent
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)
@@ -250,6 +264,7 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.rho_void = breakdown["void"]
 	state.rho_coolant = breakdown["coolant"]
 	state.rho_xenon = breakdown["xenon"]
+	state.rho_positive_scram = breakdown.get("positive_scram", 0.0)
 
 
 ## Warstwa bezpieczenstwa po fizyce kroku (ETAP 1E-1).
@@ -280,9 +295,32 @@ func _evaluate_safety() -> void:
 				state.reactor_power_fraction, state.void_fraction])
 
 
+## Efekt dodatniego scramu (grafitowe wyporniki) - ETAP 1E-3b.
+## Przez pierwsze positive_scram_duration_s po wywolaniu SCRAM grafit wypiera wode z
+## dolu rdzenia -> chwilowy DODATNI impuls, ZANIM absorber przewazy. Amplituda skalowana
+## DEFICYTEM ORM: przy ORM >= onset = 0 (SCRAM czysto ujemny -> zawsze wylacza); przy
+## niskim ORM rosnie do positive_scram_worth. Profil sin (narasta i wygasa po duration).
+## Przy duzych pustkach + niskim ORM ten impuls moze wywolac rozbieganie (mechanizm RBMK).
+func _compute_positive_scram() -> float:
+	if not safety_params.enable_positive_scram_effect:
+		return 0.0
+	if not control_rods.is_scram_active():
+		return 0.0
+	var t := control_rods.get_scram_elapsed()
+	var tau := safety_params.positive_scram_duration_s
+	if t <= 0.0 or t >= tau:
+		return 0.0
+	# Amplituda wg ORM ZATRZASNIETEGO w chwili scramu (konfiguracja przed wsunieciem pretow),
+	# nie wg rosnacego ORM podczas wsuwania - to konfiguracja startowa wyznacza efekt.
+	var amplitude := safety_params.positive_scram_worth * _scram_orm_deficit
+	return amplitude * sin(PI * t / tau)
+
+
 ## Wymusza SCRAM (RPS lub manual). Loguje przyczyne raz, przy nowym wejsciu w stan SCRAM.
 func _trigger_scram(causes: Array[int]) -> void:
 	if state_machine.trigger_scram():
+		# Zatrzask deficytu ORM z konfiguracji w chwili scramu (skala efektu dodatniego).
+		_scram_orm_deficit = orm_model.deficit_factor(_orm_equivalent)
 		var names: Array[String] = []
 		for c in causes:
 			names.append(TripSignal.describe(c))

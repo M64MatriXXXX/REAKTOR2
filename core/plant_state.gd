@@ -29,6 +29,7 @@ var rho_doppler: float = 0.0
 var rho_void: float = 0.0
 var rho_coolant: float = 0.0
 var rho_xenon: float = 0.0
+var rho_positive_scram: float = 0.0       # [-] dodatni impuls efektu scramu (1E-3)
 
 # --- Termohydraulika (ETAP 1C) ---
 var fuel_temp: float = 0.0                # [K] temperatura paliwa
@@ -40,6 +41,7 @@ var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna (prompt+de
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
+var orm_equivalent_rods: float = 0.0      # [-] ORM jako rownowazne prety (1E-3)
 var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
 var active_trips: Array[int] = []         # aktywne sygnaly AZ w tym kroku (TripSignal.Type)
 var failure_state: int = 0               # FailureConditions.Type (0 = NONE)
@@ -62,6 +64,7 @@ func to_dict() -> Dictionary:
 		"rho_void": rho_void,
 		"rho_coolant": rho_coolant,
 		"rho_xenon": rho_xenon,
+		"rho_positive_scram": rho_positive_scram,
 		"fuel_temp": fuel_temp,
 		"coolant_temp": coolant_temp,
 		"clad_temp": clad_temp,
@@ -69,6 +72,7 @@ func to_dict() -> Dictionary:
 		"coolant_flow_fraction": coolant_flow_fraction,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
+		"orm_equivalent_rods": orm_equivalent_rods,
 		"reactor_state": reactor_state,
 		"active_trips": active_trips.duplicate(),
 		"failure_state": failure_state,
@@ -89,6 +93,7 @@ func from_dict(data: Dictionary) -> void:
 	rho_void = data.get("rho_void", 0.0)
 	rho_coolant = data.get("rho_coolant", 0.0)
 	rho_xenon = data.get("rho_xenon", 0.0)
+	rho_positive_scram = data.get("rho_positive_scram", 0.0)
 	fuel_temp = data.get("fuel_temp", 0.0)
 	coolant_temp = data.get("coolant_temp", 0.0)
 	clad_temp = data.get("clad_temp", 0.0)
@@ -96,6 +101,7 @@ func from_dict(data: Dictionary) -> void:
 	coolant_flow_fraction = data.get("coolant_flow_fraction", 1.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
+	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
 	reactor_state = data.get("reactor_state", 0)
 	active_trips.clear()
 	for t in data.get("active_trips", []):

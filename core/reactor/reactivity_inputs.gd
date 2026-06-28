@@ -11,6 +11,12 @@ var void_fraction: float = 0.0       # [-] frakcja pustek 0..1
 var xenon_reactivity: float = 0.0    # [-] wklad ksenonu (z modulu xenon, 1D)
 var external_reactivity: float = 0.0 # [-] bias zewnetrzny (scenariusze/testy)
 
+# --- Sprzezenia ORM i efekt dodatniego scramu (ETAP 1E-3) ---
+# Mnoznik efektywnego wsp. pustkowego: 1.0 = bazowy; >1 gdy niski ORM wzmacnia void.
+var void_coeff_multiplier: float = 1.0
+# Chwilowy DODATNI impuls reaktywnosci z efektu scramu (grafitowe wyporniki), [-].
+var positive_scram_reactivity: float = 0.0
+
 
 ## Tworzy wejscia w punkcie ODNIESIENIA (sprzezenia = 0): temperatury i pustki
 ## rowne wartosciom referencyjnym, prety wyciagniete. Punkt startowy do strojenia.

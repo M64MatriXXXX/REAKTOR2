@@ -13,6 +13,7 @@ var _speed: float = 0.0            # aktualna predkosc [1/s]
 var _speed_normal: float = 0.01
 var _speed_scram: float = 0.30
 var _scram_active: bool = false
+var _scram_elapsed: float = 0.0   # [s] czas od wywolania SCRAM (profil efektu dodatniego, 1E-3)
 
 
 func _init(speed_normal: float, speed_scram: float, start_insertion: float = 0.0) -> void:
@@ -41,6 +42,8 @@ func scram() -> void:
 
 ## Ruch pretow ku celowi o krok, ograniczony predkoscia. Klamruje do 0..1.
 func step(dt: float) -> void:
+	if _scram_active:
+		_scram_elapsed += dt
 	var max_step := _speed * dt
 	var diff := _target - _position
 	if absf(diff) <= max_step:
@@ -64,3 +67,9 @@ func is_at_target() -> bool:
 
 func is_scram_active() -> bool:
 	return _scram_active
+
+
+## Czas [s], jaki uplynal od wywolania SCRAM (0 zanim SCRAM aktywny).
+## Sluzy do profilu czasowego efektu dodatniego scramu (1E-3b).
+func get_scram_elapsed() -> float:
+	return _scram_elapsed

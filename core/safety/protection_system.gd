@@ -20,6 +20,7 @@ const AUTO_TRIPS: Array[int] = [
 	TripSignal.Type.FUEL_TEMP,
 	TripSignal.Type.VOID,
 	TripSignal.Type.LOW_FLOW,
+	TripSignal.Type.LOW_ORM,
 ]
 const _CONFIRM_EPSILON: float = 1.0e-9
 
@@ -56,7 +57,12 @@ func evaluate_raw(state: PlantState, manual_az5: bool) -> Array[int]:
 	if state.coolant_flow_fraction < params.low_flow_trip_fraction:
 		trips.append(TripSignal.Type.LOW_FLOW)
 
-	# HAK: LOW_ORM (1E-3), PRESSURE (1C') - dodane, gdy modele beda gotowe.
+	# Niski ORM tylko, gdy interlock uzbrojony (post-1986). Pre-1986 -> pulapka mozliwa.
+	if params.orm_protection_enabled \
+			and state.orm_equivalent_rods < params.orm_trip_equivalent_rods:
+		trips.append(TripSignal.Type.LOW_ORM)
+
+	# HAK: PRESSURE (1C') - dodane, gdy obieg bedzie gotowy.
 
 	if manual_az5:
 		trips.append(TripSignal.Type.MANUAL_AZ5)

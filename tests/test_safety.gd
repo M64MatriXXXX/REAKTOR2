@@ -51,6 +51,7 @@ func _safe_state() -> PlantState:
 	s.coolant_temp = 550.0
 	s.void_fraction = 0.0
 	s.coolant_flow_fraction = 1.0
+	s.orm_equivalent_rods = 30.0   # nominalny ORM (powyzej limitu) - brak LOW_ORM trip
 	return s
 
 

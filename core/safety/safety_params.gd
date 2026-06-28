@@ -24,7 +24,7 @@ extends Resource
 # Manualny AZ-5 jest NATYCHMIASTOWY (bez okna). Warunki przegranej tez (backstop).
 # UPROSZCZENIE: jedno wspolne okno dla wszystkich auto-tripow (realny RPS ma rozne).
 @export var trip_confirmation_time_s: float = 0.5
-# Niski ORM [rownowazne prety] - HAK do 1E-3 (ORM jeszcze nieliczony w 1E-1).
+# Niski ORM [rownowazne prety] - prog tripu/interlocku (limit czarnobylski = 15).
 @export var orm_trip_equivalent_rods: float = 15.0
 # Wysokie cisnienie [MPa] - HAK do 1C' (obieg jeszcze niemodelowany).
 @export var pressure_trip_mpa: float = 8.5
@@ -49,8 +49,50 @@ extends Resource
 # Post-1986 skrocono do ~12 s; BAZ szybsze - parametryzacja w 1E-3.
 @export var scram_full_insertion_time_s: float = 18.0
 
-# --- Efekt dodatniego scramu (grafitowe wyporniki) - HAK do 1E-3 ---
+# --- ORM (operating reactivity margin) i sprzezenia - ETAP 1E-3 ---
+# ORM jako rownowazna liczba w pelni wsunietych pretow: ORM = orm_rods_scale * rod_insertion.
+# UPROSZCZENIE: model punktowy nie ma rozkladu PRZESTRZENNEGO pretow (realny ORM od niego
+# zalezy); to skalarny proxy "jak gleboko wsuniety jest bank pretow".
+# Skala dobrana tak, by nominalna pozycja krytyczna (x~0.24) dawala ORM ~30 (norma RBMK).
+@export var orm_rods_scale: float = 125.0            # rownowazne prety / jednostka x
+# Prog wlaczenia amplifikacji void (ustawiony PONIZEJ nominalnego ORM ~30, z marginesem).
+# ORM >= onset -> mnoznik void = 1.0 (fizyka nominalna nietknieta).
+@export var orm_onset_rods: float = 26.0
+# Sila sprzezenia ORM->efektywny wsp. pustkowy: mnoznik = 1 + gain * deficyt(ORM).
+# Wzmacnia void, gdy ORM niski - podtrzymuje ekskursje po prompt-krytycznym spike'u.
+@export var orm_void_gain: float = 2.5               # przy ORM=0 void coeff x3.5
+# Interlock/trip niskiego ORM (post-1986 = wlaczony; pre-1986 = wylaczony -> pulapka).
+@export var orm_protection_enabled: bool = true
+
+# --- Efekt dodatniego scramu (grafitowe wyporniki) - ETAP 1E-3 ---
 @export var enable_positive_scram_effect: bool = false
+# Maksymalna amplituda dodatniego impulsu scramu [-] (przy pelnym deficycie ORM).
+# Skalowana przez deficyt ORM: przy ORM>=onset = 0 (SCRAM czysto ujemny -> zawsze wylacza).
+# Dobrana tak, by EMERGENTNIE przekroczyc prog natychmiastowej krytycznosci (beta~650 pcm)
+# DOPIERO przy bardzo niskim ORM (~6, deficyt ~0.77 -> ~770 pcm > beta -> rozbieganie na
+# pretach natychmiastowych, mechanizm Czarnobyla); przy ORM~15 (~420 pcm < beta) odzyskiwalne.
+@export var positive_scram_worth: float = 0.010
+# Czas trwania impulsu (przejscie wypornik->absorber w dolnym rdzeniu) [s].
+@export var positive_scram_duration_s: float = 3.0
+
+
+## Preset historyczny PRZED 1986: efekt dodatniego scramu obecny, interlock ORM wylaczony,
+## wolny SCRAM ~18 s. Mozliwa "pulapka czarnobylska".
+static func pre_1986() -> SafetyParams:
+	var p := SafetyParams.new()
+	p.enable_positive_scram_effect = true
+	p.orm_protection_enabled = false
+	p.scram_full_insertion_time_s = 18.0
+	return p
+
+## Preset historyczny PO 1986: brak efektu dodatniego scramu, interlock ORM aktywny,
+## szybszy SCRAM ~12 s. Zabezpieczenia blokuja niebezpieczne konfiguracje.
+static func post_1986() -> SafetyParams:
+	var p := SafetyParams.new()
+	p.enable_positive_scram_effect = false
+	p.orm_protection_enabled = true
+	p.scram_full_insertion_time_s = 12.0
+	return p
 
 
 func validate() -> void:
@@ -66,3 +108,8 @@ func validate() -> void:
 	assert(power_runaway_fraction > overpower_trip_fraction,
 		"SafetyParams: prog rozbiegania musi byc powyzej progu przemocowania")
 	assert(scram_full_insertion_time_s > 0.0, "SafetyParams: scram_full_insertion_time_s > 0")
+	assert(orm_rods_scale > 0.0, "SafetyParams: orm_rods_scale musi byc > 0")
+	assert(orm_onset_rods > 0.0, "SafetyParams: orm_onset_rods musi byc > 0")
+	assert(orm_void_gain >= 0.0, "SafetyParams: orm_void_gain musi byc >= 0")
+	assert(positive_scram_worth >= 0.0, "SafetyParams: positive_scram_worth musi byc >= 0")
+	assert(positive_scram_duration_s > 0.0, "SafetyParams: positive_scram_duration_s > 0")
