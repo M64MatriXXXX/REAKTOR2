@@ -43,12 +43,14 @@ var steam_separators: SteamSeparators
 var turbine: Turbine
 var generator: Generator
 var grid: Grid
+var condenser: Condenser
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
 var pump_params: PumpParams
 var separator_params: SeparatorParams
 var turbine_params: TurbineParams
+var condenser_params: CondenserParams
 
 # Warstwa bezpieczenstwa (ETAP 1E-1).
 var safety_params: SafetyParams
@@ -69,6 +71,13 @@ var _manual_flow_override: bool = false
 var _manual_flow_value: float = 1.0
 var _external_reactivity: float = 0.0      # bias zewnetrzny (scenariusze/testy)
 var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
+
+# Routing zrzutu pary (ETAP 2D). Domyslnie zrzut idzie do skraplacza (BRU-K), jesli proznia
+# zachowana; interlock przelacza na BRU-A (atmosfera). _force_bru_k OMIJA interlock (override
+# operatorski / test pulapki CONDENSER_RUPTURE - zrzut wepchniety do skraplacza bez prozni).
+var _force_bru_k: bool = false
+var _bru_route_atmosphere: bool = false    # aktualna trasa zrzutu (true = BRU-A)
+var _bru_a_logged: bool = false            # jednorazowy log przelaczenia na BRU-A
 
 # Bezpieczenstwo (ETAP 1E-1).
 var _manual_az5: bool = false              # zatrzasniety przycisk operatora AZ-5
@@ -99,6 +108,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	pump_params = PumpParams.new()
 	separator_params = SeparatorParams.new()
 	turbine_params = TurbineParams.new()
+	condenser_params = CondenserParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
@@ -109,6 +119,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	turbine = Turbine.new(turbine_params)
 	generator = Generator.new(turbine_params)
 	grid = Grid.new(turbine_params.synchronous_frequency_hz)
+	condenser = Condenser.new(condenser_params)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
@@ -254,6 +265,17 @@ func reject_load() -> void:
 func trip_turbine() -> void:
 	turbine.trip()
 
+# --- Sterowanie skraplaczem / proznia (ETAP 2D) ---
+
+## Degradacja/przywrocenie sprawnosci ukladu prozni (scenariusz utraty prozni). 1.0 = nominal.
+func set_vacuum_health(health: float) -> void:
+	condenser.set_vacuum_health(health)
+
+## Wymuszenie zrzutu na BRU-K mimo interlocku (override operatorski). UWAGA: bez prozni
+## prowadzi do CONDENSER_RUPTURE - sluzy do badania pulapki (i jej testu).
+func set_force_bru_k(force: bool) -> void:
+	_force_bru_k = force
+
 ## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
 func get_thermal_state() -> Array:
 	return [_fuel_temp, _coolant_temp, _void_fraction]
@@ -324,6 +346,31 @@ func step() -> void:
 	# 8) Separatory: produkcja pary (~ moc cieplna) - odbior (turbina + zrzut BRU) -> cisnienie.
 	steam_separators.step(heat_fraction, turbine.get_steam_offtake(), FIXED_DT)
 
+	# 8b) Routing zrzutu BRU-K/BRU-A + skraplacz (ETAP 2D). Interlock BRU-K czyta ZMIERZONA
+	#     proznie z KONCA POPRZEDNIEGO kroku (kauzalnie, opoznienie 1 kroku): zrzut idzie do
+	#     skraplacza tylko z zachowana proznia - inaczej w atmosfere (BRU-A). _force_bru_k omija
+	#     interlock (override / test pulapki). WYMUSZONA KOLEJNOSC: lockout (tu) PRZED tripem
+	#     turbiny (nizej) - inaczej trip wepchnalby pare w umierajacy skraplacz (rupture).
+	var dump_flow := steam_separators.get_dump_flow()
+	var route_to_condenser := _force_bru_k or condenser.accepts_dump()
+	_bru_route_atmosphere = (dump_flow > 0.0) and not route_to_condenser
+	if _bru_route_atmosphere and not _bru_a_logged:
+		_bru_a_logged = true
+		_log("Interlock BRU-K: utrata prozni skraplacza -> zrzut przelaczony na BRU-A (atmosfera)")
+	var bru_k_flow := dump_flow if route_to_condenser else 0.0
+	condenser.step(turbine.get_steam_offtake(), bru_k_flow, FIXED_DT)
+
+	# Warunek pracy turbiny: utrata prozni -> trip (dziala od nastepnego kroku; log teraz).
+	if not condenser.vacuum_ok_for_turbine() and not turbine.is_tripped():
+		turbine.trip()
+		_log("Trip turbiny: utrata prozni skraplacza (P_skr=%.1f kPa)" % condenser.get_pressure_kpa())
+
+	# Pulapka: zrzut BRU-K wpychany do skraplacza bez prozni -> rozerwanie skraplacza.
+	# Przy DZIALAJACYM interlocku nie wystapi (zrzut juz na BRU-A); ujawnia sie po _force_bru_k.
+	if condenser.is_dumping_to_condenser() \
+			and condenser.get_pressure_kpa() >= condenser_params.rupture_kpa:
+		_latch_failure(FailureConditions.Type.CONDENSER_RUPTURE)
+
 	_sync_state(inputs)
 
 	# 9) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
@@ -358,6 +405,13 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.turbine_tripped = turbine.is_tripped()
 	state.grid_connected = grid.is_breaker_closed()
 	state.grid_frequency_hz = grid.frequency_hz(turbine.get_speed())
+
+	# Skraplacz / proznia / routing BRU (ETAP 2D).
+	state.condenser_pressure_kpa = condenser.get_pressure_kpa()
+	state.condenser_vacuum_fraction = condenser.vacuum_fraction()
+	state.condenser_steam_inflow = condenser.get_steam_inflow()
+	state.bru_route_atmosphere = _bru_route_atmosphere
+	state.bru_k_dumping = condenser.is_dumping_to_condenser()
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)

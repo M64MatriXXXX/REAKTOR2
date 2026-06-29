@@ -53,6 +53,13 @@ var grid_connected: bool = false          # generator zalaczony do sieci
 var grid_frequency_hz: float = 0.0        # [Hz] czestotliwosc generatora
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
+# --- Skraplacz / proznia / routing BRU (ETAP 2D) ---
+var condenser_pressure_kpa: float = 0.0   # [kPa abs] cisnienie skraplacza (~5 kPa nominalnie)
+var condenser_vacuum_fraction: float = 0.0 # [-] frakcja prozni 0..1 (1.0 = pelna proznia)
+var condenser_steam_inflow: float = 0.0   # [-] doplyw pary do skraplacza (wydech turbiny + BRU-K)
+var bru_route_atmosphere: bool = false    # zrzut przelaczony na BRU-A (atmosfera) zamiast BRU-K
+var bru_k_dumping: bool = false           # zrzut BRU-K aktualnie wplywa do skraplacza
+
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
 var orm_equivalent_rods: float = 0.0      # [-] ORM jako rownowazne prety (1E-3)
 var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
@@ -94,6 +101,11 @@ func to_dict() -> Dictionary:
 		"grid_frequency_hz": grid_frequency_hz,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
+		"condenser_pressure_kpa": condenser_pressure_kpa,
+		"condenser_vacuum_fraction": condenser_vacuum_fraction,
+		"condenser_steam_inflow": condenser_steam_inflow,
+		"bru_route_atmosphere": bru_route_atmosphere,
+		"bru_k_dumping": bru_k_dumping,
 		"orm_equivalent_rods": orm_equivalent_rods,
 		"reactor_state": reactor_state,
 		"active_trips": active_trips.duplicate(),
@@ -132,6 +144,11 @@ func from_dict(data: Dictionary) -> void:
 	grid_frequency_hz = data.get("grid_frequency_hz", 0.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
+	condenser_pressure_kpa = data.get("condenser_pressure_kpa", 0.0)
+	condenser_vacuum_fraction = data.get("condenser_vacuum_fraction", 0.0)
+	condenser_steam_inflow = data.get("condenser_steam_inflow", 0.0)
+	bru_route_atmosphere = data.get("bru_route_atmosphere", false)
+	bru_k_dumping = data.get("bru_k_dumping", false)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
 	reactor_state = data.get("reactor_state", 0)
 	active_trips.clear()

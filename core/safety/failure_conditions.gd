@@ -16,6 +16,7 @@ enum Type {
 	POWER_RUNAWAY,    # niekontrolowane rozbieganie mocy (eksplozja energetyczna)
 	CIRCUIT_RUPTURE,  # rozerwanie obiegu (eksplozja parowa)
 	GENERATOR_DESYNC, # zalaczenie generatora do sieci poza synchronizacja (ETAP 2C)
+	CONDENSER_RUPTURE, # rozerwanie skraplacza: zrzut BRU-K bez prozni (ETAP 2D)
 }
 
 var params: SafetyParams
@@ -53,4 +54,5 @@ static func describe(t: int) -> String:
 		Type.POWER_RUNAWAY: return "Niekontrolowane rozbieganie mocy (eksplozja)"
 		Type.GENERATOR_DESYNC: return "Zalaczenie generatora poza synchronizacja (uszkodzenie)"
 		Type.CIRCUIT_RUPTURE: return "Rozerwanie obiegu (eksplozja parowa)"
+		Type.CONDENSER_RUPTURE: return "Rozerwanie skraplacza (zrzut pary bez prozni)"
 	return "Nieznana awaria"
