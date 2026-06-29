@@ -39,6 +39,11 @@ extends Resource
 @export var turbine_trip_kpa: float = 35.0       # warunek pracy turbiny: utrata prozni -> trip
 @export var rupture_kpa: float = 50.0            # rozerwanie skraplacza (TYLKO przy doplywie BRU-K)
 
+# --- Hotwell (zbiornik kondensatu, ETAP 2E) ---
+# NOWY stan masowy nalozony na 2D; NIE dotyka rownania prozni.
+@export var hotwell_setpoint: float = 1.0        # nominalny zapas kondensatu
+@export var hotwell_capacity: float = 40.0       # pojemnosc (wspolna skala z separatorem/deaeratorem)
+
 
 func validate() -> void:
 	assert(min_pressure_kpa > 0.0, "CondenserParams: min_pressure_kpa musi byc > 0")

@@ -25,12 +25,14 @@ var _pressure_kpa: float = 0.0
 var _vacuum_health: float = 1.0     # 1.0 = pelna sprawnosc ukladu prozni; 0 = calkowita utrata
 var _steam_inflow: float = 0.0      # [-] aktualny doplyw pary (wydech turbiny + BRU-K)
 var _bru_k_admitted: bool = false   # czy w tym kroku zrzut BRU-K trafil do skraplacza
+var _hotwell_level: float = 0.0     # [-] zapas kondensatu w hotwellu (ETAP 2E)
 
 
 func _init(condenser_params: CondenserParams) -> void:
 	params = condenser_params
 	params.validate()
 	_pressure_kpa = params.nominal_pressure_kpa
+	_hotwell_level = params.hotwell_setpoint
 
 
 ## Podloga prozni: rosnie, gdy uklad odsysania pada (nieszczelnosc powietrzna).
@@ -82,3 +84,15 @@ func get_vacuum_health() -> float:
 ## Czy do skraplacza wplywa zrzut BRU-K (warunek pulapki CONDENSER_RUPTURE).
 func is_dumping_to_condenser() -> bool:
 	return _bru_k_admitted
+
+
+# --- Hotwell (zbiornik kondensatu, ETAP 2E) - NOWY stan, NIE wplywa na petle prozni ---
+
+## Aktualizacja zapasu kondensatu: skroplona para (wlot) - odplyw pomp kondensatu.
+func update_hotwell(condensed_in: float, condensate_out: float, dt: float) -> void:
+	_hotwell_level += (condensed_in - condensate_out) / params.hotwell_capacity * dt
+	_hotwell_level = maxf(0.0, _hotwell_level)
+
+
+func get_hotwell_level() -> float:
+	return _hotwell_level

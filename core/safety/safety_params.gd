@@ -28,6 +28,12 @@ extends Resource
 @export var orm_trip_equivalent_rods: float = 15.0
 # Wysokie cisnienie [MPa] - HAK do 1C' (obieg jeszcze niemodelowany).
 @export var pressure_trip_mpa: float = 8.5
+# Niski poziom wody w separatorach [-] - trip AZ (utrata feedwater, ETAP 2E). Nominał = 1.0.
+@export var separator_level_low_trip: float = 0.5
+# Wysoki poziom separatora [-] - porywanie wody do turbiny -> ochronny trip turbiny.
+@export var separator_level_high_trip: float = 1.6
+# Bardzo wysoki poziom [-] - woda realnie w turbinie -> awaria (uderzenie wodne / induction).
+@export var separator_level_highhigh_fail: float = 1.9
 
 # --- Warunki przegranej (failure states) ---
 # Meltdown paliwa: topnienie UO2 [K]. Powyzej - rdzen stopiony (stan niefizyczny do utrzymania).
@@ -107,6 +113,10 @@ func validate() -> void:
 		"SafetyParams: clad_temp_fuel_weight w [0,1]")
 	assert(power_runaway_fraction > overpower_trip_fraction,
 		"SafetyParams: prog rozbiegania musi byc powyzej progu przemocowania")
+	assert(separator_level_low_trip < separator_level_high_trip,
+		"SafetyParams: low level separatora musi byc PONIZEJ high level")
+	assert(separator_level_high_trip < separator_level_highhigh_fail,
+		"SafetyParams: high level (trip turbiny) musi byc PONIZEJ high-high (awaria induction)")
 	assert(scram_full_insertion_time_s > 0.0, "SafetyParams: scram_full_insertion_time_s > 0")
 	assert(orm_rods_scale > 0.0, "SafetyParams: orm_rods_scale musi byc > 0")
 	assert(orm_onset_rods > 0.0, "SafetyParams: orm_onset_rods musi byc > 0")

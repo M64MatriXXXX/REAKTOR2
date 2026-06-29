@@ -40,6 +40,14 @@ func _initialize() -> void:
 	var vacuum_health: float = float(args.get("vacuum-health", "0.1"))
 	# Wymuszenie zrzutu na BRU-K mimo interlocku (demo pulapki CONDENSER_RUPTURE). 0 = interlock dziala.
 	var force_bru_k: int = int(args.get("force-bru-k", "0"))
+	# Uklad wody zasilajacej (ETAP 2E): utrata pomp zasilajacych w chwili feedwater-fail-at [s]
+	# -> osuszenie separatorow -> utrata chlodzenia rdzenia. Ujemny = bez zdarzenia.
+	var feedwater_fail_at: float = float(args.get("feedwater-fail-at", "-1"))
+	# Przelew: wymuszony przeplyw zasilajacy [-] (override regulacji) -> porywanie wody do turbiny.
+	# Ujemny = regulacja normalna.
+	var feed_overfill: float = float(args.get("feed-overfill", "-1"))
+	# Dopływ wody uzupelniajacej (make-up) [-]. Domyslnie 0 (petla zamknieta).
+	var makeup: float = float(args.get("makeup", "0"))
 	# Turbina/siec (ETAP 2C): zapotrzebowanie (ujemne = nie ustawiaj), czas synchronizacji
 	# generatora, czas zrzutu obciazenia (load rejection). Ujemne czasy = bez zdarzenia.
 	var grid_demand: float = float(args.get("grid-demand", "-1"))
@@ -61,7 +69,7 @@ func _initialize() -> void:
 	elif era == "post1986":
 		safe_params = SafetyParams.post_1986()
 
-	print("=== REAKTOR headless runner (ETAP 2D) ===")
+	print("=== REAKTOR headless runner (ETAP 2E) ===")
 	print("seconds=%s seed=%s rod_target=%s external=%s scram_at=%s flow=%s pumps=%s protection=%s failures=%s era=%s grid_demand=%s connect_at=%s reject_at=%s out=%s" % [
 		seconds, seed_value, rod_target, external, scram_at, flow, pumps_running,
 		protection, failures, era, grid_demand, connect_at, reject_at, out_path])
@@ -78,6 +86,10 @@ func _initialize() -> void:
 	sim.set_protection_enabled(protection != 0)
 	sim.set_failure_states_enabled(failures != 0)
 	sim.set_force_bru_k(force_bru_k != 0)
+	if makeup > 0.0:
+		sim.set_makeup(makeup)
+	if feed_overfill >= 0.0:
+		sim.set_feed_override(feed_overfill)
 	if rod_target >= 0.0:
 		sim.set_rod_target(rod_target)
 	var total_steps := int(round(seconds * Simulation.PHYSICS_HZ))
@@ -88,9 +100,10 @@ func _initialize() -> void:
 	var connect_done := false
 	var reject_done := false
 	var vacuum_fail_done := false
+	var feedwater_fail_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_void,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,electrical_mw,turbine_speed,grid_freq_hz,grid_connected,thermal_power_mw,condenser_kpa,vacuum_frac,bru_route,condenser_inflow,orm_equiv_rods,reactor_state,failure")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_void,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,electrical_mw,turbine_speed,grid_freq_hz,grid_connected,thermal_power_mw,condenser_kpa,vacuum_frac,bru_route,condenser_inflow,sep_level,hotwell_level,dea_level,feedwater_flow,total_water_mass,bru_a_lost,orm_equiv_rods,reactor_state,failure")
 
 	for i in range(total_steps):
 		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
@@ -114,9 +127,12 @@ func _initialize() -> void:
 		if vacuum_fail_at >= 0.0 and not vacuum_fail_done and sim.state.sim_time_seconds >= vacuum_fail_at:
 			sim.set_vacuum_health(vacuum_health)        # utrata prozni -> lockout BRU-K, potem trip turbiny
 			vacuum_fail_done = true
+		if feedwater_fail_at >= 0.0 and not feedwater_fail_done and sim.state.sim_time_seconds >= feedwater_fail_at:
+			sim.fail_feedwater()                        # utrata pomp zasilajacych -> osuszenie separatorow
+			feedwater_fail_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.1f,%.4f,%.2f,%d,%.3f,%.3f,%.4f,%d,%.4f,%.2f,%d,%d" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.1f,%.4f,%.2f,%d,%.3f,%.3f,%.4f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
 				sim.state.rod_insertion,
@@ -140,6 +156,12 @@ func _initialize() -> void:
 				sim.state.condenser_vacuum_fraction,
 				1 if sim.state.bru_route_atmosphere else 0,
 				sim.state.condenser_steam_inflow,
+				sim.state.separator_level,
+				sim.state.hotwell_level,
+				sim.state.deaerator_level,
+				sim.state.feedwater_flow,
+				sim.state.total_water_mass,
+				sim.state.bru_a_lost_cumulative,
 				sim.state.orm_equivalent_rods,
 				sim.state.reactor_state,
 				sim.state.failure_state,
@@ -173,6 +195,9 @@ func _initialize() -> void:
 		sim.state.condenser_pressure_kpa, sim.state.condenser_vacuum_fraction * 100.0,
 		sim.state.condenser_steam_inflow,
 		"BRU-A (atmosfera)" if sim.state.bru_route_atmosphere else "BRU-K (skraplacz)"])
+	print("  woda: separator=%.3f hotwell=%.3f deaerator=%.3f FW=%.3f masa_calk=%.4f ubytek_BRU-A=%.4f" % [
+		sim.state.separator_level, sim.state.hotwell_level, sim.state.deaerator_level,
+		sim.state.feedwater_flow, sim.state.total_water_mass, sim.state.bru_a_lost_cumulative])
 	if sim.is_failed():
 		print("  PRZEGRANA: %s" % sim.state.failure_cause)
 	var log := sim.get_event_log()

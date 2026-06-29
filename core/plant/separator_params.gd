@@ -48,6 +48,19 @@ extends Resource
 # z 1C pozostaje OSOBNYM proxy reaktywnosci (nie tym samym strumieniem masowym).
 @export var steam_production_per_power: float = 1.0
 
+# --- Poziom wody w bebnach (ETAP 2E) ---
+# NOWY stan masowy nalozony na 2B; NIE dotyka rownania cisnienia (poziom byl odlozony do 2E).
+@export var water_level_setpoint: float = 1.0     # nominalny poziom (masa wody bebnow)
+# Pojemnosc [s nominalnego przeplywu na jednostke poziomu]: DUZA = wolna dynamika (duzy zapas).
+@export var water_capacity: float = 40.0
+# Sprzezenie wsteczne do chlodzenia rdzenia (osuszenie -> spadek przeplywu): ponizej lowlow
+# wspolczynnik chlodzenia maleje liniowo do min przy dryout. Powyzej lowlow = 1.0 (bez wplywu).
+@export var cooling_lowlow_level: float = 0.3
+@export var cooling_dryout_level: float = 0.0
+# Minimalny wspolczynnik > 0: przy pelnym osuszeniu przeplyw nie spada do zera (ochrona modelu
+# termicznego przed dzieleniem przez zero); resztkowy przeplyw i tak nie chlodzi rdzenia.
+@export var cooling_min_factor: float = 0.05
+
 
 func validate() -> void:
 	assert(drum_count > 0, "SeparatorParams: drum_count musi byc > 0")
@@ -58,3 +71,7 @@ func validate() -> void:
 	assert(dump_max_capacity > 0.0, "SeparatorParams: dump_max_capacity musi byc > 0")
 	assert(dump_closed_pressure < pressure_setpoint,
 		"SeparatorParams: dump_closed_pressure musi byc < setpoint (zrzut otwiera sie do nastawy)")
+	assert(water_level_setpoint > 0.0, "SeparatorParams: water_level_setpoint musi byc > 0")
+	assert(water_capacity > 0.0, "SeparatorParams: water_capacity musi byc > 0")
+	assert(cooling_dryout_level < cooling_lowlow_level,
+		"SeparatorParams: dryout musi byc PONIZEJ lowlow (degradacja chlodzenia miedzy nimi)")

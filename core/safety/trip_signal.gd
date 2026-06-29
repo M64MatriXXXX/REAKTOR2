@@ -12,6 +12,7 @@ enum Type {
 	LOW_FLOW,     # niski przeplyw / utrata pomp
 	LOW_ORM,      # niski operating reactivity margin (hak do 1E-3)
 	PRESSURE,     # wysokie cisnienie obiegu (hak do 1C')
+	LOW_SEP_LEVEL, # niski poziom wody w separatorach (utrata feedwater, ETAP 2E)
 	MANUAL_AZ5,   # przycisk operatora AZ-5
 }
 
@@ -25,5 +26,6 @@ static func describe(t: int) -> String:
 		Type.LOW_FLOW: return "Niski przeplyw chlodziwa"
 		Type.LOW_ORM: return "Niski ORM"
 		Type.PRESSURE: return "Wysokie cisnienie obiegu"
+		Type.LOW_SEP_LEVEL: return "Niski poziom wody w separatorach"
 		Type.MANUAL_AZ5: return "Manualny AZ-5"
 	return "Nieznany sygnal AZ"

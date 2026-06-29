@@ -22,6 +22,7 @@ const AUTO_TRIPS: Array[int] = [
 	TripSignal.Type.LOW_FLOW,
 	TripSignal.Type.LOW_ORM,
 	TripSignal.Type.PRESSURE,
+	TripSignal.Type.LOW_SEP_LEVEL,
 ]
 const _CONFIRM_EPSILON: float = 1.0e-9
 
@@ -66,6 +67,10 @@ func evaluate_raw(state: PlantState, manual_az5: bool) -> Array[int]:
 	# Wysokie cisnienie obiegu (separatory, ETAP 2B).
 	if state.pressure_mpa > params.pressure_trip_mpa:
 		trips.append(TripSignal.Type.PRESSURE)
+
+	# Niski poziom wody w separatorach (utrata feedwater, ETAP 2E).
+	if state.separator_level < params.separator_level_low_trip:
+		trips.append(TripSignal.Type.LOW_SEP_LEVEL)
 
 	if manual_az5:
 		trips.append(TripSignal.Type.MANUAL_AZ5)

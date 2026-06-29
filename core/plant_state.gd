@@ -60,6 +60,18 @@ var condenser_steam_inflow: float = 0.0   # [-] doplyw pary do skraplacza (wydec
 var bru_route_atmosphere: bool = false    # zrzut przelaczony na BRU-A (atmosfera) zamiast BRU-K
 var bru_k_dumping: bool = false           # zrzut BRU-K aktualnie wplywa do skraplacza
 
+# --- Uklad wody zasilajacej / petla masy (ETAP 2E) ---
+# Poziomy domyslnie NOMINALNE (1.0): stan bez informacji o wodzie traktowany jako nominalny,
+# by nie wywolywac falszywego tripu niskiego poziomu (np. recznie budowane stany w testach).
+var separator_level: float = 1.0          # [-] poziom wody bebnow separatora (nominał 1.0)
+var hotwell_level: float = 1.0           # [-] zapas kondensatu w hotwellu
+var deaerator_level: float = 1.0          # [-] zapas wody w deaeratorze
+var feedwater_flow: float = 0.0           # [-] przeplyw wody zasilajacej (deaerator->separator)
+var condensate_flow: float = 0.0          # [-] przeplyw kondensatu (hotwell->deaerator)
+var makeup_flow: float = 0.0              # [-] dopływ uzupelniajacy (domyslnie 0)
+var total_water_mass: float = 0.0         # [-] suma zapasow (separator+hotwell+deaerator)
+var bru_a_lost_cumulative: float = 0.0    # [-] skumulowany ubytek masy przez BRU-A (atmosfera)
+
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
 var orm_equivalent_rods: float = 0.0      # [-] ORM jako rownowazne prety (1E-3)
 var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
@@ -106,6 +118,14 @@ func to_dict() -> Dictionary:
 		"condenser_steam_inflow": condenser_steam_inflow,
 		"bru_route_atmosphere": bru_route_atmosphere,
 		"bru_k_dumping": bru_k_dumping,
+		"separator_level": separator_level,
+		"hotwell_level": hotwell_level,
+		"deaerator_level": deaerator_level,
+		"feedwater_flow": feedwater_flow,
+		"condensate_flow": condensate_flow,
+		"makeup_flow": makeup_flow,
+		"total_water_mass": total_water_mass,
+		"bru_a_lost_cumulative": bru_a_lost_cumulative,
 		"orm_equivalent_rods": orm_equivalent_rods,
 		"reactor_state": reactor_state,
 		"active_trips": active_trips.duplicate(),
@@ -149,6 +169,14 @@ func from_dict(data: Dictionary) -> void:
 	condenser_steam_inflow = data.get("condenser_steam_inflow", 0.0)
 	bru_route_atmosphere = data.get("bru_route_atmosphere", false)
 	bru_k_dumping = data.get("bru_k_dumping", false)
+	separator_level = data.get("separator_level", 0.0)
+	hotwell_level = data.get("hotwell_level", 0.0)
+	deaerator_level = data.get("deaerator_level", 0.0)
+	feedwater_flow = data.get("feedwater_flow", 0.0)
+	condensate_flow = data.get("condensate_flow", 0.0)
+	makeup_flow = data.get("makeup_flow", 0.0)
+	total_water_mass = data.get("total_water_mass", 0.0)
+	bru_a_lost_cumulative = data.get("bru_a_lost_cumulative", 0.0)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
 	reactor_state = data.get("reactor_state", 0)
 	active_trips.clear()

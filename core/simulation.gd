@@ -44,6 +44,7 @@ var turbine: Turbine
 var generator: Generator
 var grid: Grid
 var condenser: Condenser
+var feedwater: Feedwater
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
@@ -51,6 +52,7 @@ var pump_params: PumpParams
 var separator_params: SeparatorParams
 var turbine_params: TurbineParams
 var condenser_params: CondenserParams
+var feedwater_params: FeedwaterParams
 
 # Warstwa bezpieczenstwa (ETAP 1E-1).
 var safety_params: SafetyParams
@@ -78,6 +80,10 @@ var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
 var _force_bru_k: bool = false
 var _bru_route_atmosphere: bool = false    # aktualna trasa zrzutu (true = BRU-A)
 var _bru_a_logged: bool = false            # jednorazowy log przelaczenia na BRU-A
+
+# Petla masy wody (ETAP 2E). Skumulowany ubytek przez BRU-A = jedyny policzalny kanal wycieku.
+var _bru_a_lost_cumulative: float = 0.0
+var _carryover_logged: bool = false        # jednorazowy log porywania wody do turbiny
 
 # Bezpieczenstwo (ETAP 1E-1).
 var _manual_az5: bool = false              # zatrzasniety przycisk operatora AZ-5
@@ -109,6 +115,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	separator_params = SeparatorParams.new()
 	turbine_params = TurbineParams.new()
 	condenser_params = CondenserParams.new()
+	feedwater_params = FeedwaterParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
@@ -120,6 +127,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	generator = Generator.new(turbine_params)
 	grid = Grid.new(turbine_params.synchronous_frequency_hz)
 	condenser = Condenser.new(condenser_params)
+	feedwater = Feedwater.new(feedwater_params)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
@@ -276,6 +284,27 @@ func set_vacuum_health(health: float) -> void:
 func set_force_bru_k(force: bool) -> void:
 	_force_bru_k = force
 
+# --- Sterowanie woda zasilajaca / petla masy (ETAP 2E) ---
+
+## Awaria/utrata zasilania pomp zasilajacych (wybieg do 0). Osuszenie separatorow -> utrata
+## chlodzenia rdzenia (sprzezenie wsteczne do ETAPU 1 przez wspolczynnik chlodzenia).
+func fail_feedwater() -> void:
+	feedwater.set_feed_pump_running(false)
+
+func set_feed_pump_running(running: bool) -> void:
+	feedwater.set_feed_pump_running(running)
+
+func set_condensate_pump_running(running: bool) -> void:
+	feedwater.set_cond_pump_running(running)
+
+## Dopływ wody uzupelniajacej (make-up). Domyslnie 0 (petla zamknieta - test inwariancji masy).
+func set_makeup(flow: float) -> void:
+	feedwater.set_makeup(flow)
+
+## Jawne wymuszenie przeplywu zasilajacego (override regulacji) - scenariusz przelewu separatora.
+func set_feed_override(flow: float) -> void:
+	feedwater.set_feed_override(flow)
+
 ## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
 func get_thermal_state() -> Array:
 	return [_fuel_temp, _coolant_temp, _void_fraction]
@@ -323,9 +352,13 @@ func step() -> void:
 		+ decay_heat.get_decay_power_fraction()
 
 	# 5) Pompy ГЦН (bezwladnosc) -> przeplyw chlodziwa. Tryb manualny ma pierwszenstwo.
+	#    SPRZEZENIE WSTECZNE 2E: osuszenie separatorow obniza efektywny przeplyw chlodziwa
+	#    (mnoznik z KONCA poprzedniego kroku, opoznienie 1 kroku) - utrata wody krazacej.
+	#    Przy nominalnym poziomie mnoznik = 1.0 (fizyka 1C/2A nietknieta).
 	main_pumps.step(FIXED_DT)
-	_coolant_flow_fraction = _manual_flow_value if _manual_flow_override \
+	var base_flow := _manual_flow_value if _manual_flow_override \
 		else main_pumps.get_flow_fraction()
+	_coolant_flow_fraction = base_flow * steam_separators.level_cooling_factor()
 
 	# 6) Termohydraulika. Opcjonalne sprzezenie cisnienie->void (T_sat) z opoznieniem 1 kroku;
 	#    domyslnie OFF (dlug do globalnego strojenia) -> T_sat stale 558 K, fizyka void jak w 1C.
@@ -371,6 +404,31 @@ func step() -> void:
 			and condenser.get_pressure_kpa() >= condenser_params.rupture_kpa:
 		_latch_failure(FailureConditions.Type.CONDENSER_RUPTURE)
 
+	# 8c) Petla masy wody (ETAP 2E). Separator traci wode przez WRZENIE (steam_out = produkcja
+	#     pary), zyskuje przez wode zasilajaca; hotwell zyskuje skroplona pare (to co dotarlo
+	#     do skraplacza = turbina + BRU-K), traci przez pompy kondensatu. Regulacja feedwater
+	#     trzyma poziom separatora. JEDYNY ubytek masy z petli to BRU-A (atmosfera).
+	var steam_out := heat_fraction * separator_params.steam_production_per_power
+	var condensed_in := condenser.get_steam_inflow()
+	feedwater.step(steam_separators.get_water_level(), condenser.get_hotwell_level(), steam_out, FIXED_DT)
+	steam_separators.update_level(feedwater.get_feedwater_flow(), steam_out, FIXED_DT)
+	condenser.update_hotwell(condensed_in, feedwater.get_condensate_flow(), FIXED_DT)
+
+	# Ubytek BRU-A: zrzut skierowany na atmosfere = masa opuszczajaca petle (policzalny kanal).
+	var bru_a_flow := steam_separators.get_dump_flow() if _bru_route_atmosphere else 0.0
+	_bru_a_lost_cumulative += bru_a_flow * FIXED_DT
+
+	# Przelew separatora -> porywanie wody do turbiny (graded, jak lockout->rupture w 2D):
+	#   high  -> ochronny trip turbiny; high-high -> awaria (uderzenie wodne / induction).
+	var sep_level := steam_separators.get_water_level()
+	if sep_level >= safety_params.separator_level_highhigh_fail:
+		_latch_failure(FailureConditions.Type.TURBINE_WATER_INDUCTION)
+	elif sep_level >= safety_params.separator_level_high_trip and not turbine.is_tripped():
+		turbine.trip()
+		if not _carryover_logged:
+			_carryover_logged = true
+			_log("Trip turbiny: porywanie wody do turbiny (poziom separatora=%.2f)" % sep_level)
+
 	_sync_state(inputs)
 
 	# 9) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
@@ -412,6 +470,16 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.condenser_steam_inflow = condenser.get_steam_inflow()
 	state.bru_route_atmosphere = _bru_route_atmosphere
 	state.bru_k_dumping = condenser.is_dumping_to_condenser()
+
+	# Uklad wody zasilajacej / petla masy (ETAP 2E).
+	state.separator_level = steam_separators.get_water_level()
+	state.hotwell_level = condenser.get_hotwell_level()
+	state.deaerator_level = feedwater.get_deaerator_level()
+	state.feedwater_flow = feedwater.get_feedwater_flow()
+	state.condensate_flow = feedwater.get_condensate_flow()
+	state.makeup_flow = feedwater.get_makeup_flow()
+	state.total_water_mass = state.separator_level + state.hotwell_level + state.deaerator_level
+	state.bru_a_lost_cumulative = _bru_a_lost_cumulative
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)

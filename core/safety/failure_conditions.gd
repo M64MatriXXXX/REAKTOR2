@@ -17,6 +17,7 @@ enum Type {
 	CIRCUIT_RUPTURE,  # rozerwanie obiegu (eksplozja parowa)
 	GENERATOR_DESYNC, # zalaczenie generatora do sieci poza synchronizacja (ETAP 2C)
 	CONDENSER_RUPTURE, # rozerwanie skraplacza: zrzut BRU-K bez prozni (ETAP 2D)
+	TURBINE_WATER_INDUCTION, # porywanie wody do turbiny (przelew separatora, ETAP 2E)
 }
 
 var params: SafetyParams
@@ -55,4 +56,5 @@ static func describe(t: int) -> String:
 		Type.GENERATOR_DESYNC: return "Zalaczenie generatora poza synchronizacja (uszkodzenie)"
 		Type.CIRCUIT_RUPTURE: return "Rozerwanie obiegu (eksplozja parowa)"
 		Type.CONDENSER_RUPTURE: return "Rozerwanie skraplacza (zrzut pary bez prozni)"
+		Type.TURBINE_WATER_INDUCTION: return "Porywanie wody do turbiny (przelew separatora)"
 	return "Nieznana awaria"

@@ -22,6 +22,7 @@ var params: SeparatorParams
 var _pressure: float = 0.0      # [MPa]
 var _dump_flow: float = 0.0     # [-] aktualny strumien zrzutu
 var _dump_available: bool = true
+var _water_level: float = 0.0   # [-] poziom wody bebnow (ETAP 2E)
 
 
 func _init(separator_params: SeparatorParams) -> void:
@@ -29,6 +30,7 @@ func _init(separator_params: SeparatorParams) -> void:
 	params.validate()
 	# Start na nastawie -> brak transientu w nominale (produkcja=odbior).
 	_pressure = params.pressure_setpoint
+	_water_level = params.water_level_setpoint
 
 
 ## Krok petli cisnienia o dlugosci dt.
@@ -78,3 +80,26 @@ func get_dump_flow() -> float:
 
 func steam_quality() -> float:
 	return params.steam_quality
+
+
+# --- Poziom wody bebnow (ETAP 2E) - NOWY stan masowy, NIE wplywa na petle cisnienia ---
+
+## Aktualizacja poziomu: doplyw wody zasilajacej - ubytek przez wrzenie (strumien pary).
+func update_level(feedwater_in: float, steam_out: float, dt: float) -> void:
+	_water_level += (feedwater_in - steam_out) / params.water_capacity * dt
+	_water_level = maxf(0.0, _water_level)
+
+
+func get_water_level() -> float:
+	return _water_level
+
+
+## Wspolczynnik chlodzenia rdzenia (sprzezenie wsteczne do ETAPU 1): osuszenie bebnow ->
+## utrata wody krazacej -> spadek przeplywu chlodziwa. >= lowlow -> 1.0 (bez wplywu);
+## miedzy lowlow a dryout maleje liniowo do cooling_min_factor.
+func level_cooling_factor() -> float:
+	if _water_level >= params.cooling_lowlow_level:
+		return 1.0
+	var span := params.cooling_lowlow_level - params.cooling_dryout_level
+	var frac := (_water_level - params.cooling_dryout_level) / span
+	return clampf(frac, params.cooling_min_factor, 1.0)
