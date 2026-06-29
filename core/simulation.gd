@@ -40,11 +40,15 @@ var thermal_model: ThermalModel
 var decay_heat: DecayHeat
 var main_pumps: MainCirculationPumps
 var steam_separators: SteamSeparators
+var turbine: Turbine
+var generator: Generator
+var grid: Grid
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
 var pump_params: PumpParams
 var separator_params: SeparatorParams
+var turbine_params: TurbineParams
 
 # Warstwa bezpieczenstwa (ETAP 1E-1).
 var safety_params: SafetyParams
@@ -94,6 +98,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	safety_params = safe_params if safe_params != null else SafetyParams.new()
 	pump_params = PumpParams.new()
 	separator_params = SeparatorParams.new()
+	turbine_params = TurbineParams.new()
 
 	neutronics = Neutronics.new(params)
 	reactivity_model = ReactivityModel.new(reactivity_params)
@@ -101,6 +106,9 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	decay_heat = DecayHeat.new(thermal_params)
 	main_pumps = MainCirculationPumps.new(pump_params)
 	steam_separators = SteamSeparators.new(separator_params)
+	turbine = Turbine.new(turbine_params)
+	generator = Generator.new(turbine_params)
+	grid = Grid.new(turbine_params.synchronous_frequency_hz)
 	protection_system = ProtectionSystem.new(safety_params)
 	failure_conditions = FailureConditions.new(safety_params)
 	state_machine = ReactorStateMachine.new()
@@ -217,6 +225,35 @@ func set_pump_running_count(n: int) -> void:
 func set_dump_available(available: bool) -> void:
 	steam_separators.set_dump_available(available)
 
+# --- Sterowanie turbina / generatorem / siecia (ETAP 2C) ---
+
+## Zadanie zapotrzebowania sieci (0..1 mocy nominalnej) - turbina sledzi pobor pary.
+func set_grid_demand(demand_fraction: float) -> void:
+	grid.set_demand(demand_fraction)
+
+## Proba zalaczenia generatora do sieci. BRAMKA SYNCHRONIZACJI: poza oknem obrotow =
+## uszkodzenie generatora (przegrana). Zwraca true, jesli zsynchronizowano i zalaczono.
+func synchronize_generator() -> bool:
+	if grid.is_breaker_closed():
+		return true
+	if not generator.can_synchronize(turbine.get_speed()):
+		_log("Proba zalaczenia poza synchronizacja (obroty=%.3f)" % turbine.get_speed())
+		_latch_failure(FailureConditions.Type.GENERATOR_DESYNC)
+		return false
+	grid.close_breaker()
+	_log("Generator zsynchronizowany i zalaczony do sieci")
+	return true
+
+## Zrzut obciazenia / rozlaczenie od sieci (load rejection) - turbina traci obciazenie.
+func reject_load() -> void:
+	if grid.is_breaker_closed():
+		grid.open_breaker()
+		_log("Zrzut obciazenia (rozlaczenie od sieci)")
+
+## Reczny trip turbiny (zamkniecie zaworow).
+func trip_turbine() -> void:
+	turbine.trip()
+
 ## Aktualny stan cieplny (diagnostyka/testy): [T_paliwa K, T_chlodziwa K, void].
 func get_thermal_state() -> Array:
 	return [_fuel_temp, _coolant_temp, _void_fraction]
@@ -277,13 +314,19 @@ func step() -> void:
 	_coolant_temp = thermal_model.get_coolant_temp()
 	_void_fraction = thermal_model.get_void_fraction()
 
-	# 7) Separatory: produkcja pary (~ moc cieplna) - odbior (zrzut) -> cisnienie obiegu.
-	#    Brak turbiny w 2B -> odbior zewnetrzny = 0 (turbina dojdzie w 2C).
-	steam_separators.step(heat_fraction, 0.0, FIXED_DT)
+	# 7) Turbina: sledzi pobor pary (zapotrzebowanie sieci); pod siecia oddaje moc, po
+	#    odlaczeniu rozpedza sie (overspeed). Para turbiny = odbior zewnetrzny separatorow.
+	var was_tripped := turbine.is_tripped()
+	turbine.step(grid.is_breaker_closed(), grid.get_demand(), FIXED_DT)
+	if turbine.is_tripped() and not was_tripped:
+		_log("Trip turbiny: zabezpieczenie nadobrotowe (obroty=%.3f)" % turbine.get_speed())
+
+	# 8) Separatory: produkcja pary (~ moc cieplna) - odbior (turbina + zrzut BRU) -> cisnienie.
+	steam_separators.step(heat_fraction, turbine.get_steam_offtake(), FIXED_DT)
 
 	_sync_state(inputs)
 
-	# 8) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
+	# 9) Warstwa bezpieczenstwa (RPS nadrzedny): auto-SCRAM i warunki przegranej.
 	_evaluate_safety()
 
 
@@ -307,6 +350,14 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.pressure_mpa = steam_separators.get_pressure()
 	state.steam_quality = steam_separators.steam_quality()
 	state.steam_dump_flow = steam_separators.get_dump_flow()
+
+	# Turbina / generator / siec (ETAP 2C).
+	state.electrical_power_mw = generator.electrical_output_mw(
+		grid.is_breaker_closed(), turbine.mechanical_power())
+	state.turbine_speed = turbine.get_speed()
+	state.turbine_tripped = turbine.is_tripped()
+	state.grid_connected = grid.is_breaker_closed()
+	state.grid_frequency_hz = grid.frequency_hz(turbine.get_speed())
 
 	# Bezpieczenstwo (ETAP 1E): proxy koszulki + stan bloku.
 	state.clad_temp = failure_conditions.clad_temp(state)
@@ -349,14 +400,24 @@ func _evaluate_safety() -> void:
 
 	# 2) Warunki przegranej.
 	if _failure_states_enabled:
-		var f := failure_conditions.check(state)
-		if f != FailureConditions.Type.NONE:
-			_failure = f
-			state.failure_state = f
-			state.failure_cause = FailureConditions.describe(f)
-			_log("AWARIA: %s (T_paliwa=%.0fK, moc=%.2f, void=%.2f)" % [
-				state.failure_cause, state.fuel_temp,
-				state.reactor_power_fraction, state.void_fraction])
+		_latch_failure(failure_conditions.check(state))
+
+
+## Zatrzask pierwszej awarii (zamraza symulacje). Wspolny dla RPS i zdarzen 2C
+## (np. zalaczenie poza synchronizacja). NONE i awaria gdy juz przegrana - ignorowane.
+func _latch_failure(f: int) -> void:
+	if f == FailureConditions.Type.NONE:
+		return
+	if not _failure_states_enabled:
+		return
+	if _failure != FailureConditions.Type.NONE:
+		return
+	_failure = f
+	state.failure_state = f
+	state.failure_cause = FailureConditions.describe(f)
+	_log("AWARIA: %s (T_paliwa=%.0fK, moc=%.2f, cisnienie=%.2fMPa)" % [
+		state.failure_cause, state.fuel_temp,
+		state.reactor_power_fraction, state.pressure_mpa])
 
 
 ## Efekt dodatniego scramu (grafitowe wyporniki) - ETAP 1E-3b.

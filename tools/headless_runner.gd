@@ -34,6 +34,11 @@ func _initialize() -> void:
 	var pump_seize_at: float = float(args.get("pump-seize-at", "-1"))
 	# Utrata odbioru pary (zamkniecie zrzutu) w chwili dump-close-at [s] -> wzrost cisnienia.
 	var dump_close_at: float = float(args.get("dump-close-at", "-1"))
+	# Turbina/siec (ETAP 2C): zapotrzebowanie (ujemne = nie ustawiaj), czas synchronizacji
+	# generatora, czas zrzutu obciazenia (load rejection). Ujemne czasy = bez zdarzenia.
+	var grid_demand: float = float(args.get("grid-demand", "-1"))
+	var connect_at: float = float(args.get("connect-at", "-1"))
+	var reject_at: float = float(args.get("reject-at", "-1"))
 	# Co ile krokow zapisywac wiersz (1 = kazdy krok). Domyslnie 5 -> 10 Hz zapisu.
 	var sample_every: int = int(args.get("sample", "5"))
 	# Uzbrojenie RPS (auto-SCRAM). 0 = tryb "Czarnobyl" (zabezpieczenia obejscia).
@@ -50,10 +55,10 @@ func _initialize() -> void:
 	elif era == "post1986":
 		safe_params = SafetyParams.post_1986()
 
-	print("=== REAKTOR headless runner (ETAP 2A) ===")
-	print("seconds=%s seed=%s rod_target=%s external=%s scram_at=%s flow=%s pumps=%s pump_trip_at=%s pump_seize_at=%s protection=%s failures=%s era=%s out=%s" % [
+	print("=== REAKTOR headless runner (ETAP 2C) ===")
+	print("seconds=%s seed=%s rod_target=%s external=%s scram_at=%s flow=%s pumps=%s protection=%s failures=%s era=%s grid_demand=%s connect_at=%s reject_at=%s out=%s" % [
 		seconds, seed_value, rod_target, external, scram_at, flow, pumps_running,
-		pump_trip_at, pump_seize_at, protection, failures, era, out_path])
+		protection, failures, era, grid_demand, connect_at, reject_at, out_path])
 
 	var sim := Simulation.new(seed_value, null, null, null, safe_params)
 	sim.set_external_reactivity(external)
@@ -62,6 +67,8 @@ func _initialize() -> void:
 		sim.set_coolant_flow(flow)
 	if pumps_running >= 0:
 		sim.set_pump_running_count(pumps_running)
+	if grid_demand >= 0.0:
+		sim.set_grid_demand(grid_demand)
 	sim.set_protection_enabled(protection != 0)
 	sim.set_failure_states_enabled(failures != 0)
 	if rod_target >= 0.0:
@@ -71,9 +78,11 @@ func _initialize() -> void:
 	var pump_trip_done := false
 	var pump_seize_done := false
 	var dump_close_done := false
+	var connect_done := false
+	var reject_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_rods,rho_doppler,rho_void,rho_coolant,rho_positive_scram,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,clad_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,thermal_power_mw,decay_heat_fraction,orm_equiv_rods,reactor_state,failure")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_void,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,electrical_mw,turbine_speed,grid_freq_hz,grid_connected,thermal_power_mw,orm_equiv_rods,reactor_state,failure")
 
 	for i in range(total_steps):
 		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
@@ -88,30 +97,34 @@ func _initialize() -> void:
 		if dump_close_at >= 0.0 and not dump_close_done and sim.state.sim_time_seconds >= dump_close_at:
 			sim.set_dump_available(false)               # utrata odbioru -> wzrost cisnienia
 			dump_close_done = true
+		if connect_at >= 0.0 and not connect_done and sim.state.sim_time_seconds >= connect_at:
+			sim.synchronize_generator()                 # synchronizacja + zalaczenie do sieci
+			connect_done = true
+		if reject_at >= 0.0 and not reject_done and sim.state.sim_time_seconds >= reject_at:
+			sim.reject_load()                           # zrzut obciazenia (rozlaczenie)
+			reject_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.3f,%.6f,%.2f,%d,%d" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.1f,%.4f,%.2f,%d,%.3f,%.2f,%d,%d" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
 				sim.state.rod_insertion,
 				sim.state.reactivity,
-				sim.state.rho_rods,
-				sim.state.rho_doppler,
 				sim.state.rho_void,
-				sim.state.rho_coolant,
-				sim.state.rho_positive_scram,
 				sim.state.reactor_power_fraction,
 				sim.state.reactor_period_seconds,
 				sim.state.fuel_temp,
 				sim.state.coolant_temp,
-				sim.state.clad_temp,
 				sim.state.void_fraction,
 				sim.state.coolant_flow_fraction,
 				sim.state.pumps_running,
 				sim.state.pressure_mpa,
 				sim.state.steam_dump_flow,
+				sim.state.electrical_power_mw,
+				sim.state.turbine_speed,
+				sim.state.grid_frequency_hz,
+				1 if sim.state.grid_connected else 0,
 				sim.state.thermal_power_mw,
-				sim.state.decay_heat_fraction,
 				sim.state.orm_equivalent_rods,
 				sim.state.reactor_state,
 				sim.state.failure_state,
@@ -137,6 +150,10 @@ func _initialize() -> void:
 		sim.state.coolant_flow_fraction, "manual" if sim.is_manual_flow() else "pompy"])
 	print("  separatory: cisnienie=%.3f MPa zrzut=%.3f jakosc_pary=%.2f" % [
 		sim.state.pressure_mpa, sim.state.steam_dump_flow, sim.state.steam_quality])
+	print("  turbina/siec: P_el=%.1f MWe obroty=%.3f f=%.2f Hz siec=%s trip_turb=%s" % [
+		sim.state.electrical_power_mw, sim.state.turbine_speed, sim.state.grid_frequency_hz,
+		"tak" if sim.state.grid_connected else "nie",
+		"tak" if sim.state.turbine_tripped else "nie"])
 	if sim.is_failed():
 		print("  PRZEGRANA: %s" % sim.state.failure_cause)
 	var log := sim.get_event_log()

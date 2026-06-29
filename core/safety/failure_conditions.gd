@@ -14,7 +14,8 @@ enum Type {
 	FUEL_MELTDOWN,    # topnienie paliwa UO2
 	CLAD_FAILURE,     # uszkodzenie koszulki (cyrkon) - wczesniejszy etap
 	POWER_RUNAWAY,    # niekontrolowane rozbieganie mocy (eksplozja energetyczna)
-	CIRCUIT_RUPTURE,  # rozerwanie obiegu (eksplozja parowa) - hak do 1C'
+	CIRCUIT_RUPTURE,  # rozerwanie obiegu (eksplozja parowa)
+	GENERATOR_DESYNC, # zalaczenie generatora do sieci poza synchronizacja (ETAP 2C)
 }
 
 var params: SafetyParams
@@ -50,5 +51,6 @@ static func describe(t: int) -> String:
 		Type.FUEL_MELTDOWN: return "Stopienie paliwa (meltdown rdzenia)"
 		Type.CLAD_FAILURE: return "Uszkodzenie koszulki paliwowej"
 		Type.POWER_RUNAWAY: return "Niekontrolowane rozbieganie mocy (eksplozja)"
+		Type.GENERATOR_DESYNC: return "Zalaczenie generatora poza synchronizacja (uszkodzenie)"
 		Type.CIRCUIT_RUPTURE: return "Rozerwanie obiegu (eksplozja parowa)"
 	return "Nieznana awaria"

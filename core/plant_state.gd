@@ -44,6 +44,13 @@ var thermal_power_mw: float = 0.0         # [MW] aktualna moc cieplna (prompt+de
 var pressure_mpa: float = 0.0             # [MPa] cisnienie obiegu (separatory)
 var steam_quality: float = 0.0            # [-] jakosc pary na wylocie separatora (~0.15)
 var steam_dump_flow: float = 0.0          # [-] strumien zrzutu pary (BRU)
+
+# --- Turbina / generator / siec (ETAP 2C) ---
+var electrical_power_mw: float = 0.0      # [MWe] moc elektryczna oddawana do sieci
+var turbine_speed: float = 1.0            # [-] obroty turbiny (1.0 = synchroniczne)
+var turbine_tripped: bool = false         # zabezpieczenie nadobrotowe turbiny
+var grid_connected: bool = false          # generator zalaczony do sieci
+var grid_frequency_hz: float = 0.0        # [Hz] czestotliwosc generatora
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
@@ -80,6 +87,11 @@ func to_dict() -> Dictionary:
 		"pressure_mpa": pressure_mpa,
 		"steam_quality": steam_quality,
 		"steam_dump_flow": steam_dump_flow,
+		"electrical_power_mw": electrical_power_mw,
+		"turbine_speed": turbine_speed,
+		"turbine_tripped": turbine_tripped,
+		"grid_connected": grid_connected,
+		"grid_frequency_hz": grid_frequency_hz,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
 		"orm_equivalent_rods": orm_equivalent_rods,
@@ -113,6 +125,11 @@ func from_dict(data: Dictionary) -> void:
 	pressure_mpa = data.get("pressure_mpa", 0.0)
 	steam_quality = data.get("steam_quality", 0.0)
 	steam_dump_flow = data.get("steam_dump_flow", 0.0)
+	electrical_power_mw = data.get("electrical_power_mw", 0.0)
+	turbine_speed = data.get("turbine_speed", 1.0)
+	turbine_tripped = data.get("turbine_tripped", false)
+	grid_connected = data.get("grid_connected", false)
+	grid_frequency_hz = data.get("grid_frequency_hz", 0.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
