@@ -49,8 +49,11 @@ var steam_dump_flow: float = 0.0          # [-] strumien zrzutu pary (BRU)
 var electrical_power_mw: float = 0.0      # [MWe] moc elektryczna oddawana do sieci
 var turbine_speed: float = 1.0            # [-] obroty turbiny (1.0 = synchroniczne)
 var turbine_tripped: bool = false         # zabezpieczenie nadobrotowe turbiny
+var turbine_state: int = 2                # TurbineStateMachine.State (READY_TO_SYNC=2, ETAP 2F-1)
 var grid_connected: bool = false          # generator zalaczony do sieci
 var grid_frequency_hz: float = 0.0        # [Hz] czestotliwosc generatora
+var blackout: bool = false                # utrata zasilania zewnetrznego (pompy na wybiegu, 2F-1)
+var pump_supply_fraction: float = 1.0     # [-] zasilanie szyny pomp (1.0 = pelne)
 var decay_heat_fraction: float = 0.0      # [-] ulamek mocy z rozpadu (cieplo powylaczeniowe)
 
 # --- Skraplacz / proznia / routing BRU (ETAP 2D) ---
@@ -109,8 +112,11 @@ func to_dict() -> Dictionary:
 		"electrical_power_mw": electrical_power_mw,
 		"turbine_speed": turbine_speed,
 		"turbine_tripped": turbine_tripped,
+		"turbine_state": turbine_state,
 		"grid_connected": grid_connected,
 		"grid_frequency_hz": grid_frequency_hz,
+		"blackout": blackout,
+		"pump_supply_fraction": pump_supply_fraction,
 		"thermal_power_mw": thermal_power_mw,
 		"decay_heat_fraction": decay_heat_fraction,
 		"condenser_pressure_kpa": condenser_pressure_kpa,
@@ -160,8 +166,11 @@ func from_dict(data: Dictionary) -> void:
 	electrical_power_mw = data.get("electrical_power_mw", 0.0)
 	turbine_speed = data.get("turbine_speed", 1.0)
 	turbine_tripped = data.get("turbine_tripped", false)
+	turbine_state = data.get("turbine_state", 2)
 	grid_connected = data.get("grid_connected", false)
 	grid_frequency_hz = data.get("grid_frequency_hz", 0.0)
+	blackout = data.get("blackout", false)
+	pump_supply_fraction = data.get("pump_supply_fraction", 1.0)
 	thermal_power_mw = data.get("thermal_power_mw", 0.0)
 	decay_heat_fraction = data.get("decay_heat_fraction", 0.0)
 	condenser_pressure_kpa = data.get("condenser_pressure_kpa", 0.0)

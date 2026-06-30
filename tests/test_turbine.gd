@@ -25,6 +25,7 @@ func test_disconnected_holds_no_admission() -> void:
 
 
 func test_connected_tracks_demand() -> void:
+	_turb.synchronize()   # READY_TO_SYNC -> SYNCHRONIZED (start nominalny @ obroty 1.0)
 	for i in range(int(round(8.0 / DT))):
 		_turb.step(true, 1.0, DT)
 	assert_almost_eq(_turb.get_steam_offtake(), 1.0, 1e-2, "Pod siecia admisja sledzi zapotrzebowanie")
@@ -32,12 +33,16 @@ func test_connected_tracks_demand() -> void:
 
 
 func test_load_rejection_overspeeds_and_trips() -> void:
+	_turb.synchronize()
 	for i in range(int(round(5.0 / DT))):
 		_turb.step(true, 1.0, DT)   # pod obciazeniem
+	var peak := 0.0
 	for i in range(int(round(5.0 / DT))):
-		_turb.step(false, 1.0, DT)  # zrzut obciazenia
+		_turb.step(false, 1.0, DT)  # zrzut obciazenia (rozlaczenie od sieci)
+		peak = maxf(peak, _turb.get_speed())
 	assert_true(_turb.is_tripped(), "Zrzut obciazenia -> overspeed -> trip turbiny")
-	assert_gt(_turb.get_speed(), _tp.overspeed_trip_fraction, "Obroty przekroczyly prog nadobrotowy")
+	# Po tripie turbina STYGNIE (wybieg 2F-1) - sprawdzamy SZCZYT obrotow, nie wartosc koncowa.
+	assert_gt(peak, _tp.overspeed_trip_fraction, "Obroty przekroczyly prog nadobrotowy")
 
 
 # --- Generator: MWe + bramka sync ---
@@ -76,8 +81,8 @@ func test_unsynchronized_connection_is_failure_with_cause() -> void:
 	sim.synchronize_generator()
 	sim.advance(15.0)
 	sim.reject_load()
-	sim.advance(5.0)   # turbina rozpedzona, tripnieta
-	assert_gt(sim.state.turbine_speed, 1.1, "Turbina w nadobrotach po zrzucie obciazenia")
+	sim.advance(1.0)   # turbina rozpedzona (krotkie okno - potem wybieg ja wystudza)
+	assert_gt(sim.state.turbine_speed, 1.05, "Turbina w nadobrotach poza oknem sync po zrzucie")
 	sim.synchronize_generator()   # proba zalaczenia poza oknem sync
 	assert_true(sim.is_failed(), "Zalaczenie poza synchronizacja -> awaria")
 	assert_eq(sim.get_failure(), FailureConditions.Type.GENERATOR_DESYNC, "Przyczyna: desync")

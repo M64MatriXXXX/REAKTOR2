@@ -29,3 +29,10 @@ func electrical_output_mw(connected: bool, mechanical_power: float) -> float:
 ## Spelniona tylko w oknie +/- sync_tolerance wokol obrotow synchronicznych (1.0).
 func can_synchronize(turbine_speed: float) -> bool:
 	return absf(turbine_speed - 1.0) <= params.sync_tolerance
+
+
+## Resztkowa moc na szyne pomp podczas WYBIEGU turbogeneratora (ETAP 2F-1).
+## Znormalizowana (0..1) ~ obroty: stygnacy wirnik zasila pompy ГЦН malejaco (historyczny
+## test wybiegu - turbogenerator "kupuje czas" pompom przy utracie zasilania zewnetrznego).
+func coast_down_output(turbine_speed: float) -> float:
+	return clampf(turbine_speed, 0.0, 1.0)

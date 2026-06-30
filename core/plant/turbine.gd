@@ -1,54 +1,97 @@
 class_name Turbine
 extends RefCounted
 
-## Turbina (ETAP 2C) - strona mechaniczna: admisja pary -> moc mechaniczna -> obroty.
+## Turbina - strona mechaniczna (2C) + PELNA MASZYNA STANOW i wybieg (2F-1).
 ##
 ## UPROSZCZENIE: jeden ekwiwalentny stopien (WP+NP zlane, reheat jako sprawnosc w MWe).
-## Admisja pary = zadanie poboru (governor sledzi zapotrzebowanie sieci). Para to
-## jednoczesnie OBCIAZENIE separatorow (external_offtake) i zrodlo momentu wirnika.
+## Admisja pary = obciazenie separatorow (external_offtake) i zrodlo momentu wirnika.
 ##
-## Obroty (znormalizowane, 1.0 = synchroniczne 3000/min):
-##   - POD SIECIA (connected): wirnik zablokowany na obrotach synchronicznych (siec sztywna);
-##     moc mechaniczna = moc elektryczna oddawana do sieci.
-##   - ODLACZONY (load rejection): brak obciazenia elektrycznego -> para ROZPEDZA wirnik
-##     (overspeed). Zabezpieczenie nadobrotowe odcina pare (trip) -> para idzie do BRU.
+## Zachowanie zalezy od STANU maszyny (TurbineStateMachine), obudowujacej bramke sync z 2C:
+##   STOPPED       - obracarka: brak admisji, wirnik stygnie do zera.
+##   ROLLING       - rozbieg na parze: governor predkosci ku obrotom synchronicznym (1.0).
+##   READY_TO_SYNC - obroty synchroniczne, brak obciazenia (admisja ~0); gotowa do zalaczenia.
+##   SYNCHRONIZED  - pod siecia: admisja sledzi zapotrzebowanie (2C). Po rozlaczeniu (load
+##                   rejection) zawory zamykaja sie z bezwladnoscia -> wirnik ROZPEDZA sie
+##                   (overspeed) -> zabezpieczenie nadobrotowe -> TRIPPED.
+##   TRIPPED       - zawory zamkniete; WYBIEG: obroty zanikaja ku zeru ze stala turbiny.
 ##
-## INTEGRATOR: zawory - filtr 1. rzedu (analityczny); obroty - jawny krok (ograniczony,
-## bo po tripie admisja->0 i przyspieszanie ustaje). Sprzezenia szybkie turbina <-> wolne
-## separatory rozprzega opoznienie 1 kroku w Simulation.
+## INTEGRATOR: zawory i obroty - filtr 1. rzedu (analityczny, bezwarunkowo stabilny), jak ГЦН.
+##
+## START NOMINALNY = READY_TO_SYNC @ obroty 1.0 (spojnie z 2C). Zimny rozruch przez cold_start().
 
 var params: TurbineParams
+var state_machine: TurbineStateMachine
 
 var _admission: float = 0.0    # [-] aktualna admisja pary (pobor)
 var _speed: float = 1.0        # [-] obroty znormalizowane (1.0 = synchroniczne)
-var _tripped: bool = false     # zabezpieczenie nadobrotowe zadzialalo (zawory zamkniete)
 
 
 func _init(turbine_params: TurbineParams) -> void:
 	params = turbine_params
 	params.validate()
+	state_machine = TurbineStateMachine.new()   # start READY_TO_SYNC @ obroty 1.0
 
 
-## Krok o dlugosci dt. connected - czy generator pod siecia; demand - zadanie poboru [-].
-## Governor: POD SIECIA admisja sledzi zapotrzebowanie; ODLACZONA -> zamkniecie pary
-## (utrzymanie obrotow synchronicznych, gotowosc do sync; przy load rejection zawory
-## zamykaja sie z bezwladnoscia, wiec wirnik chwilowo przyspiesza -> overspeed).
-func step(connected: bool, demand: float, dt: float) -> void:
-	var target := 0.0
-	if not _tripped and connected:
-		target = clampf(demand, 0.0, params.max_admission)
-	_admission += (target - _admission) * (1.0 - exp(-dt / params.valve_time_s))
+# --- Komendy operatorskie / procedury ---
 
-	if connected:
-		# Siec sztywna trzyma wirnik na obrotach synchronicznych.
-		_speed = 1.0
-	else:
-		# Bez obciazenia elektrycznego moc mechaniczna rozpedza wirnik.
-		_speed += params.overspeed_accel_gain * _admission * dt
+## Zimny start: turbina na obracarce (STOPPED), wirnik zatrzymany.
+func cold_start() -> void:
+	if state_machine.cold_start():
+		_speed = 0.0
+		_admission = 0.0
 
-	# Zabezpieczenie nadobrotowe: odciecie pary.
-	if _speed > params.overspeed_trip_fraction:
-		_tripped = true
+## Rozbieg na parze (STOPPED -> ROLLING).
+func roll() -> void:
+	state_machine.roll()
+
+## Synchronizacja (READY_TO_SYNC -> SYNCHRONIZED). Bramke sprawdza wywolujacy (Simulation).
+func synchronize() -> void:
+	state_machine.synchronize()
+
+## Trip turbiny (zamkniecie zaworow) - z dowolnego stanu.
+func trip() -> void:
+	state_machine.trip()
+
+
+## Krok o dlugosci dt. grid_connected - czy wylacznik generatora zamkniety; demand - pobor [-].
+func step(grid_connected: bool, demand: float, dt: float) -> void:
+	var valve_alpha := 1.0 - exp(-dt / params.valve_time_s)
+	var coast_alpha := 1.0 - exp(-dt / params.turbine_coast_down_time_s)
+
+	match state_machine.get_state():
+		TurbineStateMachine.State.STOPPED:
+			_admission += (0.0 - _admission) * valve_alpha
+			_speed += (0.0 - _speed) * coast_alpha
+
+		TurbineStateMachine.State.ROLLING:
+			# Governor predkosci: para rozkreca wirnik ku obrotom synchronicznym.
+			_admission += (params.roll_admission - _admission) * valve_alpha
+			_speed += (1.0 - _speed) * (1.0 - exp(-dt / params.roll_time_s))
+			if absf(_speed - 1.0) <= params.sync_tolerance:
+				state_machine.reach_sync_speed()
+
+		TurbineStateMachine.State.READY_TO_SYNC:
+			# Obroty synchroniczne, brak obciazenia - admisja schodzi do zera.
+			_admission += (0.0 - _admission) * valve_alpha
+			_speed = 1.0
+
+		TurbineStateMachine.State.SYNCHRONIZED:
+			if grid_connected:
+				# Siec sztywna trzyma wirnik; admisja sledzi zapotrzebowanie.
+				var target := clampf(demand, 0.0, params.max_admission)
+				_admission += (target - _admission) * valve_alpha
+				_speed = 1.0
+			else:
+				# Zrzut obciazenia: zawory zamykaja sie z bezwladnoscia -> nadobroty.
+				_admission += (0.0 - _admission) * valve_alpha
+				_speed += params.overspeed_accel_gain * _admission * dt
+				if _speed > params.overspeed_trip_fraction:
+					state_machine.trip()
+
+		TurbineStateMachine.State.TRIPPED:
+			# Zawory zamkniete, wirnik stygnie (wybieg) ku zeru.
+			_admission += (0.0 - _admission) * valve_alpha
+			_speed += (0.0 - _speed) * coast_alpha
 
 
 ## Strumien pary pobierany przez turbine (= obciazenie separatorow, external_offtake).
@@ -63,8 +106,10 @@ func get_speed() -> float:
 	return _speed
 
 func is_tripped() -> bool:
-	return _tripped
+	return state_machine.is_tripped()
 
-## Reczny trip turbiny (zamkniecie zaworow).
-func trip() -> void:
-	_tripped = true
+func is_synchronized() -> bool:
+	return state_machine.is_synchronized()
+
+func get_state() -> int:
+	return state_machine.get_state()

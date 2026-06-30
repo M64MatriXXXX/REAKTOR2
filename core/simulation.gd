@@ -85,6 +85,10 @@ var _bru_a_logged: bool = false            # jednorazowy log przelaczenia na BRU
 var _bru_a_lost_cumulative: float = 0.0
 var _carryover_logged: bool = false        # jednorazowy log porywania wody do turbiny
 
+# Blackout / wybieg (ETAP 2F-1). Utrata zasilania zewnetrznego: pompy ГЦН zasilane z
+# wybiegajacego turbogeneratora (coast_down_output) zamiast sieci.
+var _blackout: bool = false
+
 # Bezpieczenstwo (ETAP 1E-1).
 var _manual_az5: bool = false              # zatrzasniety przycisk operatora AZ-5
 var _protection_enabled: bool = true       # RPS uzbrojony (false = tryb "Czarnobyl")
@@ -259,6 +263,7 @@ func synchronize_generator() -> bool:
 		_log("Proba zalaczenia poza synchronizacja (obroty=%.3f)" % turbine.get_speed())
 		_latch_failure(FailureConditions.Type.GENERATOR_DESYNC)
 		return false
+	turbine.synchronize()   # FSM: READY_TO_SYNC -> SYNCHRONIZED (obudowuje bramke 2C)
 	grid.close_breaker()
 	_log("Generator zsynchronizowany i zalaczony do sieci")
 	return true
@@ -272,6 +277,25 @@ func reject_load() -> void:
 ## Reczny trip turbiny (zamkniecie zaworow).
 func trip_turbine() -> void:
 	turbine.trip()
+
+## Zimny start turbiny: na obracarke (STOPPED). Procedura rozruchu (2F-2).
+func cold_start_turbine() -> void:
+	turbine.cold_start()
+
+## Rozbieg turbiny na parze (STOPPED -> ROLLING).
+func roll_turbine() -> void:
+	turbine.roll()
+
+## Blackout (utrata zasilania zewnetrznego): turbina tripuje, a jej WYBIEG zasila pompy ГЦН
+## (historyczny test wybiegu - turbogenerator "kupuje czas" pompom). Domyka dlug sprzezenia 2A/2C.
+func trigger_blackout() -> void:
+	if _blackout:
+		return
+	_blackout = true
+	if grid.is_breaker_closed():
+		grid.open_breaker()
+	turbine.trip()
+	_log("Blackout: utrata zasilania zewnetrznego - pompy ГЦН na wybiegu turbogeneratora")
 
 # --- Sterowanie skraplaczem / proznia (ETAP 2D) ---
 
@@ -355,6 +379,10 @@ func step() -> void:
 	#    SPRZEZENIE WSTECZNE 2E: osuszenie separatorow obniza efektywny przeplyw chlodziwa
 	#    (mnoznik z KONCA poprzedniego kroku, opoznienie 1 kroku) - utrata wody krazacej.
 	#    Przy nominalnym poziomie mnoznik = 1.0 (fizyka 1C/2A nietknieta).
+	#    SPRZEZENIE WYBIEGU 2F-1: podczas blackoutu szyna pomp = wyjscie wybiegowe turbogeneratora
+	#    (obroty turbiny z konca poprzedniego kroku) -> przeplyw pomp sledzi bezwladnosc turbiny.
+	if _blackout:
+		main_pumps.set_supply_fraction(generator.coast_down_output(turbine.get_speed()))
 	main_pumps.step(FIXED_DT)
 	var base_flow := _manual_flow_value if _manual_flow_override \
 		else main_pumps.get_flow_fraction()
@@ -467,8 +495,11 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 		grid.is_breaker_closed(), turbine.mechanical_power())
 	state.turbine_speed = turbine.get_speed()
 	state.turbine_tripped = turbine.is_tripped()
+	state.turbine_state = turbine.get_state()
 	state.grid_connected = grid.is_breaker_closed()
 	state.grid_frequency_hz = grid.frequency_hz(turbine.get_speed())
+	state.blackout = _blackout
+	state.pump_supply_fraction = main_pumps.get_supply_fraction()
 
 	# Skraplacz / proznia / routing BRU (ETAP 2D).
 	state.condenser_pressure_kpa = condenser.get_pressure_kpa()

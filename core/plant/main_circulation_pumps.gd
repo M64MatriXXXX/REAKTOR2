@@ -22,6 +22,10 @@ var params: PumpParams
 var _running: PackedInt32Array     # 1 = zasilanie wlaczone, 0 = wylaczone (na pompe)
 var _failed: PackedInt32Array      # 1 = zacieta (mechanicznie zatrzymana)
 var _speed: PackedFloat64Array     # predkosc 0..1 (stan inercyjny)
+# Zasilanie szyny pomp 0..1 (ETAP 2F-1): 1.0 = pelne (siec/zasilanie wlasne). Podczas blackoutu
+# spada do wyjscia wybiegowego turbogeneratora -> pompy podazaja za bezwladnoscia turbiny.
+# DOMYSLNIE 1.0 -> zachowanie identyczne jak 2A (target pompy = 1.0 przy zasilaniu).
+var _supply_fraction: float = 1.0
 
 
 func _init(pump_params: PumpParams) -> void:
@@ -67,11 +71,18 @@ func set_running_count(n: int) -> void:
 		_running[i] = 1 if i < n else 0
 
 
+## Ustawia zasilanie szyny pomp 0..1 (ETAP 2F-1). 1.0 = pelne (jak 2A). Podczas blackoutu
+## podawane jest wyjscie wybiegowe turbogeneratora -> przeplyw pomp sledzi bezwladnosc turbiny.
+func set_supply_fraction(fraction: float) -> void:
+	_supply_fraction = clampf(fraction, 0.0, 1.0)
+
+
 ## Krok bezwladnosci o dlugosci dt. Kazda pompa dazy do celu z wlasciwa stala czasowa.
+## Cel pompy zasilanej = _supply_fraction (1.0 nominalnie -> identycznie jak 2A).
 func step(dt: float) -> void:
 	for i in range(_speed.size()):
 		var powered := _running[i] == 1 and _failed[i] == 0
-		var target := 1.0 if powered else 0.0
+		var target := _supply_fraction if powered else 0.0
 		var tau: float
 		if _failed[i] == 1:
 			tau = params.seizure_time_s          # zaciecie: nagle
@@ -97,6 +108,10 @@ func running_count() -> int:
 		if _running[i] == 1 and _failed[i] == 0:
 			count += 1
 	return count
+
+
+func get_supply_fraction() -> float:
+	return _supply_fraction
 
 
 func get_pump_speed(index: int) -> float:

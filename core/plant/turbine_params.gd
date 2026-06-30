@@ -27,9 +27,18 @@ extends Resource
 # Prog zadzialania zabezpieczenia nadobrotowego (turbina odcina pare) [-].
 @export var overspeed_trip_fraction: float = 1.10   # 110% = 55 Hz / 3300 obr/min
 
-# --- Synchronizacja (MINIMALNA bramka - do obudowania pelna maszyna stanow w 2F) ---
+# --- Synchronizacja (bramka z 2C, obudowana pelna maszyna stanow w 2F-1) ---
 # Okno obrotow, w ktorym wolno zalaczyc generator do sieci [-]. Poza nim = uszkodzenie.
 @export var sync_tolerance: float = 0.02            # +/-2% obrotow synchronicznych
+
+# --- Rozbieg i wybieg wirnika (ETAP 2F-1) ---
+# Stala czasowa rozbiegu na parze (obracarka -> obroty synchroniczne) [s].
+@export var roll_time_s: float = 20.0
+# Admisja pary podczas rozbiegu [-] (pobor na rozkrecenie wirnika).
+@export var roll_admission: float = 0.15
+# Czas WYBIEGU wirnika+generatora po tripie [s] - bezwladnosc maszyny (analitycznie, jak ГЦН).
+# Stroic RAZEM z coast_down_time_s pomp: podczas blackoutu stygnacy turbogenerator zasila pompy.
+@export var turbine_coast_down_time_s: float = 30.0
 
 
 func validate() -> void:
@@ -39,3 +48,6 @@ func validate() -> void:
 	assert(overspeed_accel_gain > 0.0, "TurbineParams: overspeed_accel_gain musi byc > 0")
 	assert(overspeed_trip_fraction > 1.0, "TurbineParams: overspeed_trip_fraction musi byc > 1.0")
 	assert(sync_tolerance > 0.0, "TurbineParams: sync_tolerance musi byc > 0")
+	assert(roll_time_s > 0.0, "TurbineParams: roll_time_s musi byc > 0")
+	assert(roll_admission > 0.0, "TurbineParams: roll_admission musi byc > 0")
+	assert(turbine_coast_down_time_s > 0.0, "TurbineParams: turbine_coast_down_time_s musi byc > 0")

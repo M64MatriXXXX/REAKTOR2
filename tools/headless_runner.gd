@@ -48,6 +48,9 @@ func _initialize() -> void:
 	var feed_overfill: float = float(args.get("feed-overfill", "-1"))
 	# Dopływ wody uzupelniajacej (make-up) [-]. Domyslnie 0 (petla zamknieta).
 	var makeup: float = float(args.get("makeup", "0"))
+	# Blackout (ETAP 2F-1): utrata zasilania zewnetrznego w chwili blackout-at [s] -> turbina
+	# tripuje, jej wybieg zasila pompy ГЦН (test wybiegu). Ujemny = bez zdarzenia.
+	var blackout_at: float = float(args.get("blackout-at", "-1"))
 	# Turbina/siec (ETAP 2C): zapotrzebowanie (ujemne = nie ustawiaj), czas synchronizacji
 	# generatora, czas zrzutu obciazenia (load rejection). Ujemne czasy = bez zdarzenia.
 	var grid_demand: float = float(args.get("grid-demand", "-1"))
@@ -69,7 +72,7 @@ func _initialize() -> void:
 	elif era == "post1986":
 		safe_params = SafetyParams.post_1986()
 
-	print("=== REAKTOR headless runner (ETAP 2E) ===")
+	print("=== REAKTOR headless runner (ETAP 2F-1) ===")
 	print("seconds=%s seed=%s rod_target=%s external=%s scram_at=%s flow=%s pumps=%s protection=%s failures=%s era=%s grid_demand=%s connect_at=%s reject_at=%s out=%s" % [
 		seconds, seed_value, rod_target, external, scram_at, flow, pumps_running,
 		protection, failures, era, grid_demand, connect_at, reject_at, out_path])
@@ -101,9 +104,10 @@ func _initialize() -> void:
 	var reject_done := false
 	var vacuum_fail_done := false
 	var feedwater_fail_done := false
+	var blackout_done := false
 
 	var rows: PackedStringArray = []
-	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_void,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,void_fraction,coolant_flow,pumps_running,pressure_mpa,steam_dump_flow,electrical_mw,turbine_speed,grid_freq_hz,grid_connected,thermal_power_mw,condenser_kpa,vacuum_frac,bru_route,condenser_inflow,sep_level,hotwell_level,dea_level,feedwater_flow,total_water_mass,bru_a_lost,orm_equiv_rods,reactor_state,failure")
+	rows.append("tick,sim_time_s,rod_insertion,reactivity,rho_void,reactor_power_fraction,reactor_period_s,fuel_temp_k,coolant_temp_k,void_fraction,coolant_flow,pumps_running,pump_supply,pressure_mpa,steam_dump_flow,electrical_mw,turbine_speed,turbine_state,grid_freq_hz,grid_connected,thermal_power_mw,condenser_kpa,vacuum_frac,bru_route,condenser_inflow,sep_level,hotwell_level,dea_level,feedwater_flow,total_water_mass,bru_a_lost,orm_equiv_rods,reactor_state,failure")
 
 	for i in range(total_steps):
 		if scram_at >= 0.0 and not scram_done and sim.state.sim_time_seconds >= scram_at:
@@ -130,9 +134,12 @@ func _initialize() -> void:
 		if feedwater_fail_at >= 0.0 and not feedwater_fail_done and sim.state.sim_time_seconds >= feedwater_fail_at:
 			sim.fail_feedwater()                        # utrata pomp zasilajacych -> osuszenie separatorow
 			feedwater_fail_done = true
+		if blackout_at >= 0.0 and not blackout_done and sim.state.sim_time_seconds >= blackout_at:
+			sim.trigger_blackout()                      # utrata zasilania -> pompy na wybiegu turbiny
+			blackout_done = true
 		sim.step()
 		if sim.state.tick % sample_every == 0:
-			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.1f,%.4f,%.2f,%d,%.3f,%.3f,%.4f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d" % [
+			rows.append("%d,%.4f,%.6f,%.8f,%.8f,%.4f,%.3f,%.3f,%.3f,%.6f,%.4f,%d,%.4f,%.4f,%.4f,%.1f,%.4f,%d,%.2f,%d,%.3f,%.3f,%.4f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%d,%d" % [
 				sim.state.tick,
 				sim.state.sim_time_seconds,
 				sim.state.rod_insertion,
@@ -145,10 +152,12 @@ func _initialize() -> void:
 				sim.state.void_fraction,
 				sim.state.coolant_flow_fraction,
 				sim.state.pumps_running,
+				sim.state.pump_supply_fraction,
 				sim.state.pressure_mpa,
 				sim.state.steam_dump_flow,
 				sim.state.electrical_power_mw,
 				sim.state.turbine_speed,
+				sim.state.turbine_state,
 				sim.state.grid_frequency_hz,
 				1 if sim.state.grid_connected else 0,
 				sim.state.thermal_power_mw,
@@ -187,10 +196,14 @@ func _initialize() -> void:
 		sim.state.coolant_flow_fraction, "manual" if sim.is_manual_flow() else "pompy"])
 	print("  separatory: cisnienie=%.3f MPa zrzut=%.3f jakosc_pary=%.2f" % [
 		sim.state.pressure_mpa, sim.state.steam_dump_flow, sim.state.steam_quality])
-	print("  turbina/siec: P_el=%.1f MWe obroty=%.3f f=%.2f Hz siec=%s trip_turb=%s" % [
-		sim.state.electrical_power_mw, sim.state.turbine_speed, sim.state.grid_frequency_hz,
+	print("  turbina/siec: P_el=%.1f MWe obroty=%.3f stan=%s f=%.2f Hz siec=%s trip_turb=%s" % [
+		sim.state.electrical_power_mw, sim.state.turbine_speed,
+		sim.turbine.state_machine.state_name(), sim.state.grid_frequency_hz,
 		"tak" if sim.state.grid_connected else "nie",
 		"tak" if sim.state.turbine_tripped else "nie"])
+	if sim.state.blackout:
+		print("  blackout: pompy ГЦН na wybiegu turbogeneratora, szyna_zasilania=%.3f" % [
+			sim.state.pump_supply_fraction])
 	print("  skraplacz: P=%.1f kPa proznia=%.1f%% doplyw=%.3f zrzut=%s" % [
 		sim.state.condenser_pressure_kpa, sim.state.condenser_vacuum_fraction * 100.0,
 		sim.state.condenser_steam_inflow,

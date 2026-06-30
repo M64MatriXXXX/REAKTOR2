@@ -120,6 +120,52 @@ func test_coast_down_buys_time_before_trip() -> void:
 	assert_false(sim.is_failed(), "Wybieg zapobiega natychmiastowej awarii")
 
 
+# --- REGRESJA 2A po wprowadzeniu supply_fraction (ETAP 2F-1) ---
+
+func test_supply_fraction_default_reproduces_2a_behavior() -> void:
+	# set_supply_fraction(1.0) (domyslne) MUSI dac identyczny rozbieg/wybieg/zaciecie jak 2A.
+	# Rozbieg pompy rezerwowej:
+	var p := MainCirculationPumps.new(PumpParams.new())
+	p.set_supply_fraction(1.0)            # jawnie nominalna szyna zasilania
+	p.set_pump_running(6, true)
+	p.step(DT)
+	assert_gt(p.get_pump_speed(6), 0.0, "Rozbieg startuje (jak 2A)")
+	assert_lt(p.get_pump_speed(6), 0.05, "...nie skokowo (bezwladnosc rozbiegu jak 2A)")
+	_settle_pump(p, 15.0)
+	assert_gt(p.get_pump_speed(6), 0.7, "Rozbieg do predkosci znamionowej (jak 2A)")
+	# Wybieg vs zaciecie przy supply=1.0:
+	var coast := MainCirculationPumps.new(PumpParams.new())
+	coast.set_supply_fraction(1.0)
+	coast.set_pump_running(0, false)
+	var seize := MainCirculationPumps.new(PumpParams.new())
+	seize.set_supply_fraction(1.0)
+	seize.fail_pump(0)
+	for i in range(int(round(1.5 / DT))):
+		coast.step(DT)
+		seize.step(DT)
+	assert_gt(coast.get_pump_speed(0), 0.9, "Wybieg powolny (jak 2A)")
+	assert_lt(seize.get_pump_speed(0), 0.5, "Zaciecie szybkie (jak 2A)")
+	assert_eq(coast.get_supply_fraction(), 1.0, "Szyna zasilania domyslnie pelna")
+
+
+func test_low_flow_trip_unchanged_with_supply_fraction() -> void:
+	# LOW_FLOW (integracja 2A->1E) dziala identycznie przy nominalnej szynie zasilania.
+	var sp := SafetyParams.new()
+	sp.low_flow_trip_fraction = 0.7
+	var sim := Simulation.new(0, null, null, null, sp)
+	for idx in [3, 4, 5]:
+		sim.fail_pump(idx)
+	sim.advance(8.0)
+	assert_eq(sim.get_reactor_state(), ReactorStateMachine.State.SCRAM,
+		"Utrata pomp -> LOW_FLOW -> SCRAM (regresja 2A, supply=1.0 domyslnie)")
+	assert_almost_eq(sim.state.pump_supply_fraction, 1.0, 1e-9, "Bez blackoutu szyna pomp pelna")
+
+
+func _settle_pump(p: MainCirculationPumps, seconds: float) -> void:
+	for i in range(int(round(seconds / DT))):
+		p.step(DT)
+
+
 # --- Determinizm i serializacja ---
 
 func test_determinism_with_pump_ops() -> void:
