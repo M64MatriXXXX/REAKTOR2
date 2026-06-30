@@ -29,6 +29,14 @@ extends Resource
 # wypalenia/temperatury jest drugorzedna dla grywalnosci i bedzie ewentualnie dostrojona.
 @export var gen_time: float = 1.0e-4
 
+# Zrodlo rozruchowe (ETAP 2F-2): staly czlon zrodlowy S w dn/dt = ... + S [1/s, w jedn. n].
+# Realny reaktor ma zrodlo neutronow (Cf-252 / Am-Be / fotoneutrony) ustalajace MIERZALNA
+# podkrytyczna podloge mocy - to ono umozliwia rozruch z zimnego, podkrytycznego stanu.
+# DOMYSLNIE 0.0 = DOKLADNIE kinetyka 1A (czlon h*S=0 -> bit-identyczny wynik). Wlaczany maly
+# tylko przy zimnym starcie. UWAGA: przy S>0 reaktor nigdy nie ma dokladnie zerowej mocy, a
+# krytycznosc przy rho->0 to rownowaga zrodlo<->ucieczka; trzymac S male, by przy pracy n>>S.
+@export var neutron_source: float = 0.0
+
 
 ## Calkowity udzial opoznionych neutronow beta = sum(beta_i).
 func total_beta() -> float:

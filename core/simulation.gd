@@ -197,8 +197,15 @@ func reset_after_scram() -> bool:
 	return true
 
 ## Operatorskie zadanie przejscia stanu (PCS). Zwraca true, jesli legalne i wykonane.
+## INTERLOCK (2F-2): start reaktora (SHUTDOWN->STARTUP) wymaga przeplywu chlodziwa - odmowa z logiem.
 func request_state(target: int) -> bool:
-	return state_machine.request(target, _start_interlocks_ok())
+	var ok := state_machine.request(target, _start_interlocks_ok())
+	if not ok and target == ReactorStateMachine.State.STARTUP \
+			and state_machine.get_state() == ReactorStateMachine.State.SHUTDOWN \
+			and _coolant_flow_fraction < safety_params.low_flow_trip_fraction:
+		_log("Interlock: start reaktora zablokowany - za niski przeplyw chlodziwa (%.2f < %.2f)" % [
+			_coolant_flow_fraction, safety_params.low_flow_trip_fraction])
+	return ok
 
 func get_reactor_state() -> int:
 	return state_machine.get_state()
@@ -259,6 +266,13 @@ func set_grid_demand(demand_fraction: float) -> void:
 func synchronize_generator() -> bool:
 	if grid.is_breaker_closed():
 		return true
+	# INTERLOCK (2F-2): synchronizacja dozwolona tylko z turbiny gotowej (po rozbiegu).
+	# Stan inny niz READY_TO_SYNC -> odmowa BEZ awarii (np. proba przed rozbiegiem / po tripie).
+	if turbine.get_state() != TurbineStateMachine.State.READY_TO_SYNC:
+		_log("Interlock: synchronizacja zablokowana - turbina nie gotowa (stan %s)" %
+			turbine.state_machine.state_name())
+		return false
+	# Bramka 2C: w stanie READY, ale poza oknem obrotow -> zalaczenie = uszkodzenie generatora.
 	if not generator.can_synchronize(turbine.get_speed()):
 		_log("Proba zalaczenia poza synchronizacja (obroty=%.3f)" % turbine.get_speed())
 		_latch_failure(FailureConditions.Type.GENERATOR_DESYNC)
@@ -282,9 +296,52 @@ func trip_turbine() -> void:
 func cold_start_turbine() -> void:
 	turbine.cold_start()
 
-## Rozbieg turbiny na parze (STOPPED -> ROLLING).
-func roll_turbine() -> void:
+## Rozbieg turbiny na parze (STOPPED -> ROLLING). Zwraca true, jesli dozwolony.
+## INTERLOCK (2F-2): rozbieg wymaga USTALONEJ PROZNI skraplacza i cisnienia pary - inaczej
+## stygnaca turbina rozkrecana bez prozni / bez pary. Odmowa z przyczyna w logu.
+func roll_turbine() -> bool:
+	if condenser.get_pressure_kpa() > turbine_params.roll_min_vacuum_kpa:
+		_log("Interlock: rozbieg turbiny zablokowany - brak prozni skraplacza (%.1f kPa)" %
+			condenser.get_pressure_kpa())
+		return false
+	if steam_separators.get_pressure() < turbine_params.roll_min_pressure_mpa:
+		_log("Interlock: rozbieg turbiny zablokowany - za niskie cisnienie pary (%.2f MPa)" %
+			steam_separators.get_pressure())
+		return false
 	turbine.roll()
+	return true
+
+## Obciazenie turbiny (zadanie poboru pary). Zwraca true, jesli dozwolone.
+## INTERLOCK (2F-2): obciazac wolno dopiero gdy generator POD SIECIA (po synchronizacji).
+func request_load(demand: float) -> bool:
+	if not turbine.is_synchronized() or not grid.is_breaker_closed():
+		_log("Interlock: obciazenie zablokowane - generator nie pod siecia (stan turbiny %s)" %
+			turbine.state_machine.state_name())
+		return false
+	grid.set_demand(clampf(demand, 0.0, 1.0))
+	return true
+
+## Krytyczna pozycja pretow przy aktualnym nadmiarze reaktywnosci (sterowanie mocy w 2F-2).
+func get_critical_insertion() -> float:
+	return reactivity_model.critical_rod_insertion(reactivity_params.excess_reactivity)
+
+## Wlacza/zmienia zrodlo rozruchowe (podkrytyczna podloga umozliwiajaca rozruch z zimnego).
+func set_neutron_source(source: float) -> void:
+	params.neutron_source = maxf(0.0, source)
+
+## Stawia blok w STANIE ZIMNYM (procedura wyjsciowa do rozruchu, 2F-2): reaktor SHUTDOWN,
+## prety wsuniete, turbina na obracarce (STOPPED), niska moc gotowosci na zrodle rozruchowym.
+## Pompy zostaja czynne (przeplyw konieczny do interlocku startu). cold_source - zrodlo (podloga).
+func cold_shutdown(cold_source: float = 1.0e-3, standby_power: float = 0.01) -> void:
+	state_machine.request(ReactorStateMachine.State.SHUTDOWN, true)
+	control_rods.set_position(1.0)               # prety wsuniete (stan zimny, bez rampy)
+	set_neutron_source(cold_source)              # zrodlo rozruchowe -> podkrytyczna podloga
+	neutronics.initialize_steady_state(standby_power)
+	decay_heat.initialize_steady_state(standby_power)
+	turbine.cold_start()                          # turbina na obracarce
+	if grid.is_breaker_closed():
+		grid.open_breaker()
+	_log("Blok w stanie zimnym (SHUTDOWN, prety wsuniete, turbina STOPPED, zrodlo rozruchowe)")
 
 ## Blackout (utrata zasilania zewnetrznego): turbina tripuje, a jej WYBIEG zasila pompy ГЦН
 ## (historyczny test wybiegu - turbogenerator "kupuje czas" pompom). Domyka dlug sprzezenia 2A/2C.

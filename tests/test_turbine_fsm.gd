@@ -31,12 +31,17 @@ func test_roll_up_reaches_sync_speed() -> void:
 
 
 func test_cannot_synchronize_stopped_turbine() -> void:
-	# Bramka sync (2C, obudowana): turbiny na obracarce (obroty 0) nie wolno zalaczyc.
+	# Interlock (2F-2): turbiny na obracarce (nie READY_TO_SYNC) nie wolno zalaczyc -
+	# odmowa BEZ awarii (interlock chroni, zanim dojdzie do uszkodzenia).
 	var sim := Simulation.new(0)
 	sim.cold_start_turbine()
 	assert_false(sim.synchronize_generator(), "Sync turbiny na obracarce zablokowana")
-	assert_eq(sim.get_failure(), FailureConditions.Type.GENERATOR_DESYNC,
-		"Proba sync poza oknem (obroty 0) -> desync")
+	assert_false(sim.is_failed(), "Interlock odmawia bez awarii (chroni przed uszkodzeniem)")
+	var found := false
+	for entry in sim.get_event_log():
+		if entry.contains("turbina nie gotowa"):
+			found = true
+	assert_true(found, "Log zawiera przyczyne: turbina nie gotowa do synchronizacji")
 
 
 func test_full_lifecycle_roll_sync_load() -> void:

@@ -73,24 +73,24 @@ func test_steam_to_electrical_when_connected() -> void:
 	assert_almost_eq(sim.state.grid_frequency_hz, 50.0, 1e-3, "Czestotliwosc 50 Hz (zsynchronizowana)")
 
 
-func test_unsynchronized_connection_is_failure_with_cause() -> void:
-	# Doprowadzamy turbine do nadobrotow (zrzut obciazenia), potem proba ponownego
-	# zalaczenia poza synchronizacja -> uszkodzenie generatora.
+func test_resync_of_tripped_turbine_is_blocked_by_interlock() -> void:
+	# Po zrzucie obciazenia turbina przechodzi w nadobroty i tripuje (TRIPPED). Proba ponownego
+	# zalaczenia jest blokowana przez INTERLOCK 2F-2 (turbina nie READY_TO_SYNC) - odmowa BEZ
+	# uszkodzenia. (FSM: turbina READY ma zawsze obroty 1.0, wiec DESYNC tu nieosiagalny.)
 	var sim := Simulation.new(0)
 	sim.set_grid_demand(1.0)
 	sim.synchronize_generator()
 	sim.advance(15.0)
 	sim.reject_load()
-	sim.advance(1.0)   # turbina rozpedzona (krotkie okno - potem wybieg ja wystudza)
-	assert_gt(sim.state.turbine_speed, 1.05, "Turbina w nadobrotach poza oknem sync po zrzucie")
-	sim.synchronize_generator()   # proba zalaczenia poza oknem sync
-	assert_true(sim.is_failed(), "Zalaczenie poza synchronizacja -> awaria")
-	assert_eq(sim.get_failure(), FailureConditions.Type.GENERATOR_DESYNC, "Przyczyna: desync")
+	sim.advance(5.0)   # zrzut obciazenia -> overspeed -> trip
+	assert_true(sim.state.turbine_tripped, "Zrzut obciazenia -> trip turbiny")
+	assert_false(sim.synchronize_generator(), "Ponowna synchronizacja trippnietej turbiny zablokowana")
+	assert_false(sim.is_failed(), "Interlock odmawia bez awarii (chroni przed uszkodzeniem)")
 	var found := false
 	for entry in sim.get_event_log():
-		if entry.contains("poza synchronizacja"):
+		if entry.contains("turbina nie gotowa"):
 			found = true
-	assert_true(found, "Log zdarzen zawiera przyczyne: zalaczenie poza synchronizacja")
+	assert_true(found, "Log zdarzen zawiera przyczyne interlocku: turbina nie gotowa")
 
 
 func test_load_rejection_overspeed_and_bru_pickup() -> void:

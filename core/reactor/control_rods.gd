@@ -53,6 +53,15 @@ func step(dt: float) -> void:
 	_position = clampf(_position, 0.0, 1.0)
 
 
+## Ustawia pozycje pretow BEZPOSREDNIO (bez rampy) - do inicjalizacji stanu (np. zimny start
+## ustawia prety wsuniete). Ignorowane po SCRAM. Cel = pozycja (brak ruchu po ustawieniu).
+func set_position(insertion: float) -> void:
+	if _scram_active:
+		return
+	_position = clampf(insertion, 0.0, 1.0)
+	_target = _position
+
+
 func get_insertion() -> float:
 	return _position
 

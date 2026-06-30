@@ -151,6 +151,63 @@ func test_determinism_identical_runs() -> void:
 		"Te same wejscia -> identyczne prekursory")
 
 
+# --- TWARDA REGRESJA 1A po dodaniu czlonu zrodlowego (ETAP 2F-2) ---
+
+func test_source_zero_is_bit_identical_to_1a() -> void:
+	# Przy neutron_source=0 (domyslnie) kinetyka MUSI dac BIT-IDENTYCZNE wyniki co przed zmiana.
+	# Wartosci zlote uchwycone z kodu 1A SPRZED dodania zrodla (h*S = h*0 = +0.0 -> no-op).
+	# Porownujemy KANONICZNE reprezentacje var_to_str (round-trippable) - rownosc lancuchow =
+	# rownosc bitowa double (bez kruchosci parsowania literalu float w assert_eq).
+	assert_eq(_params.neutron_source, 0.0, "Zrodlo domyslnie WYLACZONE (1A nietkniete)")
+
+	var a := Neutronics.new(_params)
+	a.initialize_steady_state(1.0)
+	for i in range(500):
+		a.step(0.0008, DT)
+	assert_eq(var_to_str(a.get_power_fraction()), "1.4481904379256403", "rho=0.0008/500: moc bit-identyczna jak 1A")
+	var c := a.get_precursors()
+	assert_eq(var_to_str(c[0]), "179.6833912057313", "prekursor grupy 0 bit-identyczny jak 1A")
+	assert_eq(var_to_str(c[5]), "1.305604303693821", "prekursor grupy 5 bit-identyczny jak 1A")
+
+	var b := Neutronics.new(_params)
+	b.initialize_steady_state(1.0)
+	for i in range(1500):
+		b.step(0.001, DT)
+	assert_eq(var_to_str(b.get_power_fraction()), "2.4453895636984697", "rho=0.001/1500: moc bit-identyczna jak 1A")
+
+	var d := Neutronics.new(_params)
+	d.initialize_steady_state(1.0)
+	for i in range(100):
+		d.step(-0.05, DT)
+	assert_eq(var_to_str(d.get_power_fraction()), "0.07559191847856218", "rho=-0.05/100: moc bit-identyczna jak 1A")
+
+
+func test_source_establishes_subcritical_floor() -> void:
+	# Z wlaczonym zrodlem moc podkrytyczna NIE zanika do zera, lecz ustala sie na podkrytycznej
+	# podlodze (rownowaga zrodlo<->ucieczka) - to ono umozliwia rozruch. Krytycznosc subtelniejsza.
+	var ps := ReactorParams.new()
+	ps.neutron_source = 1.0e-6
+	var neu := Neutronics.new(ps)
+	neu.initialize_steady_state(0.0)            # start od zera
+	for i in range(int(round(120.0 / DT))):
+		neu.step(-0.02, DT)                     # gleboko podkrytycznie
+	var floor_power := neu.get_power_fraction()
+	assert_gt(floor_power, 0.0, "Zrodlo utrzymuje mierzalna podkrytyczna podloge (nie zero)")
+	assert_lt(floor_power, 0.01, "Podloga niska (zrodlo male, n<<nominal)")
+
+
+func test_source_negligible_at_power() -> void:
+	# Przy normalnej pracy (n=1 >> S) male zrodlo praktycznie nie zmienia fizyki: rho=0
+	# trzyma moc ~stala jak w 1A (subtelny dryf od zrodla pomijalny).
+	var ps := ReactorParams.new()
+	ps.neutron_source = 1.0e-6
+	var neu := Neutronics.new(ps)
+	neu.initialize_steady_state(1.0)
+	for i in range(int(round(60.0 / DT))):
+		neu.step(0.0, DT)
+	assert_almost_eq(neu.get_power_fraction(), 1.0, 1.0e-3, "Przy pracy n>>S: fizyka ~ jak 1A")
+
+
 # --- Stan nadkrytyczny natychmiastowy (prompt critical) ---
 
 func test_prompt_critical_rapid_growth_stays_finite() -> void:

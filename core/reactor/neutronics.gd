@@ -23,10 +23,11 @@ extends RefCounted
 ##
 ## Wyprowadzenie (subkrok dlugosci h):
 ##   C_i^{k+1} = (C_i^k + h*(beta_i/Lambda)*n^{k+1}) / (1 + h*lambda_i)
-##   n^{k+1}   = (n^k + h*S0) / (1 - a - h*S1)
+##   n^{k+1}   = (n^k + h*S0 + h*S) / (1 - a - h*S1)
 ##     a  = h*(rho - beta)/Lambda
 ##     S0 = sum_i lambda_i * C_i^k / (1 + h*lambda_i)
 ##     S1 = sum_i lambda_i * h*(beta_i/Lambda) / (1 + h*lambda_i)
+##     S  = zrodlo rozruchowe (ETAP 2F-2; domyslnie 0 -> bit-identycznie jak 1A)
 
 # Docelowa dlugosc subkroku [s]. Krok symulacji (dt) dzielimy na tyle subkrokow,
 # by kazdy byl <= tej wartosci. Mniejsze h = wieksza dokladnosc.
@@ -89,7 +90,8 @@ func _solve_substep(reactivity: float, h: float) -> void:
 	if absf(denom) < MIN_DENOMINATOR:
 		denom = MIN_DENOMINATOR if denom >= 0.0 else -MIN_DENOMINATOR
 
-	var n_next := (_n + h * s0) / denom
+	# Czlon zrodlowy h*S (ETAP 2F-2): przy S=0 to dodanie 0.0 -> wynik bit-identyczny jak 1A.
+	var n_next := (_n + h * s0 + h * params.neutron_source) / denom
 	# Moc nie moze byc ujemna (artefakt numeryczny przy ekstremalnym tranzjencie).
 	n_next = maxf(0.0, n_next)
 

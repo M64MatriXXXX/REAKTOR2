@@ -40,6 +40,11 @@ extends Resource
 # Stroic RAZEM z coast_down_time_s pomp: podczas blackoutu stygnacy turbogenerator zasila pompy.
 @export var turbine_coast_down_time_s: float = 30.0
 
+# --- Interlocki rozruchu turbiny (ETAP 2F-2) ---
+# Rozbieg dozwolony tylko z ustalona proznia skraplacza (P_cond ponizej progu) i cisnieniem pary.
+@export var roll_min_vacuum_kpa: float = 15.0       # P_cond musi byc <= (proznia ustalona)
+@export var roll_min_pressure_mpa: float = 5.0      # cisnienie pary musi byc >= (jest para na rozbieg)
+
 
 func validate() -> void:
 	assert(nominal_electrical_mw > 0.0, "TurbineParams: nominal_electrical_mw musi byc > 0")
