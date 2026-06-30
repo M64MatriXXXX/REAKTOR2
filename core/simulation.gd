@@ -408,26 +408,32 @@ func step() -> void:
 	#     pary), zyskuje przez wode zasilajaca; hotwell zyskuje skroplona pare (to co dotarlo
 	#     do skraplacza = turbina + BRU-K), traci przez pompy kondensatu. Regulacja feedwater
 	#     trzyma poziom separatora. JEDYNY ubytek masy z petli to BRU-A (atmosfera).
-	var steam_out := heat_fraction * separator_params.steam_production_per_power
-	var condensed_in := condenser.get_steam_inflow()
-	feedwater.step(steam_separators.get_water_level(), condenser.get_hotwell_level(), steam_out, FIXED_DT)
-	steam_separators.update_level(feedwater.get_feedwater_flow(), steam_out, FIXED_DT)
-	condenser.update_hotwell(condensed_in, feedwater.get_condensate_flow(), FIXED_DT)
+	#     BRAMKA: tryb manualny przeplywu (set_coolant_flow) to ETAP-1 tryb surowej fizyki -
+	#     OMIJA wtorny uklad wody (poziomy trzymane nominalnie, bez sprzezenia i tripow poziomu).
+	if not _manual_flow_override:
+		var steam_out := heat_fraction * separator_params.steam_production_per_power
+		var condensed_in := condenser.get_steam_inflow()
+		feedwater.step(steam_separators.get_water_level(), condenser.get_hotwell_level(),
+			steam_out, FIXED_DT)
+		steam_separators.update_level(feedwater.get_feedwater_flow(), steam_out, FIXED_DT)
+		condenser.update_hotwell(condensed_in, feedwater.get_condensate_flow(), FIXED_DT)
 
-	# Ubytek BRU-A: zrzut skierowany na atmosfere = masa opuszczajaca petle (policzalny kanal).
-	var bru_a_flow := steam_separators.get_dump_flow() if _bru_route_atmosphere else 0.0
-	_bru_a_lost_cumulative += bru_a_flow * FIXED_DT
+		# Ubytek BRU-A: zrzut na atmosfere = masa opuszczajaca petle (jedyny policzalny kanal).
+		# Ksiegowany w jednostkach POZIOMU (dzielony przez pojemnosc), spojnie z masa zbiornikow,
+		# by ΔM_total = ubytek BRU-A dokladnie (przy jednolitej pojemnosci rezerwuarow).
+		var bru_a_flow := steam_separators.get_dump_flow() if _bru_route_atmosphere else 0.0
+		_bru_a_lost_cumulative += bru_a_flow * FIXED_DT / separator_params.water_capacity
 
-	# Przelew separatora -> porywanie wody do turbiny (graded, jak lockout->rupture w 2D):
-	#   high  -> ochronny trip turbiny; high-high -> awaria (uderzenie wodne / induction).
-	var sep_level := steam_separators.get_water_level()
-	if sep_level >= safety_params.separator_level_highhigh_fail:
-		_latch_failure(FailureConditions.Type.TURBINE_WATER_INDUCTION)
-	elif sep_level >= safety_params.separator_level_high_trip and not turbine.is_tripped():
-		turbine.trip()
-		if not _carryover_logged:
-			_carryover_logged = true
-			_log("Trip turbiny: porywanie wody do turbiny (poziom separatora=%.2f)" % sep_level)
+		# Przelew separatora -> porywanie wody do turbiny (graded, jak lockout->rupture w 2D):
+		#   high  -> ochronny trip turbiny; high-high -> awaria (uderzenie wodne / induction).
+		var sep_level := steam_separators.get_water_level()
+		if sep_level >= safety_params.separator_level_highhigh_fail:
+			_latch_failure(FailureConditions.Type.TURBINE_WATER_INDUCTION)
+		elif sep_level >= safety_params.separator_level_high_trip and not turbine.is_tripped():
+			turbine.trip()
+			if not _carryover_logged:
+				_carryover_logged = true
+				_log("Trip turbiny: porywanie wody do turbiny (poziom separatora=%.2f)" % sep_level)
 
 	_sync_state(inputs)
 

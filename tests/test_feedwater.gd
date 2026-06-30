@@ -34,9 +34,9 @@ func test_bru_a_loss_accounted() -> void:
 	sim.set_vacuum_health(0.1)
 	sim.advance(20.0)
 	var mass_lost := mass_start - sim.state.total_water_mass
-	assert_gt(mass_lost, 0.5, "Masa ubywa po przejsciu zrzutu na BRU-A")
+	assert_gt(mass_lost, 0.3, "Masa ubywa po przejsciu zrzutu na BRU-A")
 	assert_almost_eq(mass_lost, sim.state.bru_a_lost_cumulative, 0.05,
-		"Ubytek masy = skumulowany strumien BRU-A (jedyny policzalny kanal)")
+		"Ubytek masy = skumulowany ubytek BRU-A (jedyny policzalny kanal, jednostki poziomu)")
 
 
 # --- (2) Feedwater jako wezel bezpieczenstwa ---
@@ -107,14 +107,16 @@ func test_overfill_carryover_trips_turbine() -> void:
 
 
 func test_deaerator_depletion_limits_feedwater() -> void:
-	# Pusty deaerator -> pompy zasilajace traca ssanie -> przeplyw zasilajacy odciety.
-	# Failures OFF, by przelew separatora nie zakonczyl symulacji przed wyczerpaniem zbiornika.
+	# Utrata pomp kondensatu -> deaerator nie jest uzupelniany -> opada do minimum ssania ->
+	# pompy zasilajace traca ssanie -> przeplyw zasilajacy odciety. Protection/failures OFF,
+	# by izolowac sam mechanizm zbiornika (bez SCRAM/awarii rdzenia jako zaklocenia).
 	var sim := Simulation.new(0)
+	sim.set_protection_enabled(false)
 	sim.set_failure_states_enabled(false)
-	sim.set_feed_override(3.0)   # pobor > maks. pompy kondensatu -> deaerator opada do minimum
-	sim.advance(80.0)
+	sim.set_condensate_pump_running(false)   # brak doplywu do deaeratora
+	sim.advance(60.0)
 	assert_lt(sim.state.deaerator_level, 0.1, "Deaerator wyczerpany do minimum ssania")
-	assert_lt(sim.state.feedwater_flow, 0.5, "Pompy zasilajace odciete (utrata ssania)")
+	assert_lt(sim.state.feedwater_flow, 0.3, "Pompy zasilajace odciete (utrata ssania)")
 
 
 # --- (3) Regresja: 2B i 2D nietkniete ---

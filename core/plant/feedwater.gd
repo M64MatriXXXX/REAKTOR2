@@ -31,6 +31,10 @@ func _init(feedwater_params: FeedwaterParams) -> void:
 	params = feedwater_params
 	params.validate()
 	_deaerator_level = params.deaerator_setpoint
+	# Start w stanie ustalonym nominalnym (jak separator/pompy ГЦН): przeplywy = nominalna para,
+	# by uniknac transientu rozruchowego osuszajacego poziomy.
+	_feed_flow = 1.0
+	_cond_flow = 1.0
 
 
 ## Krok ukladu o dlugosci dt.
