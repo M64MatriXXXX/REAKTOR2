@@ -95,6 +95,10 @@ var _carryover_logged: bool = false        # jednorazowy log porywania wody do t
 # wybiegajacego turbogeneratora (coast_down_output) zamiast sieci.
 var _blackout: bool = false
 
+# Diagnostyka GT-1: gdy true, produkcja pary = CHWILOWA moc (stary model, "para natychmiast"),
+# zamiast cieplo-oddane-do-chlodziwa z 1C. Sluzy do CZYSTEGO porownania S (bez konfundu C_f).
+var _steam_instant: bool = false
+
 # Bezpieczenstwo (ETAP 1E-1).
 var _manual_az5: bool = false              # zatrzasniety przycisk operatora AZ-5
 var _protection_enabled: bool = true       # RPS uzbrojony (false = tryb "Czarnobyl")
@@ -238,6 +242,11 @@ func set_xenon_enabled(enabled: bool) -> void:
 
 func is_xenon_enabled() -> bool:
 	return _xenon_enabled
+
+## Diagnostyka GT-1: produkcja pary = chwilowa moc (stary model) zamiast cieplo z 1C.
+## Do czystego porownania S; NIE do normalnego uzytku (para powstaje z ciepla, nie z mocy).
+func set_steam_instant(instant: bool) -> void:
+	_steam_instant = instant
 
 ## Wymusza przeplyw chlodziwa 0..1 w jawnym TRYBIE MANUALNYM (override pomp ГЦН).
 ## Uzywane przez scenariusze/testy ETAPU 1; pompy sa wtedy pomijane jako zrodlo przeplywu.
@@ -483,8 +492,12 @@ func step() -> void:
 	if turbine.is_tripped() and not was_tripped:
 		_log("Trip turbiny: zabezpieczenie nadobrotowe (obroty=%.3f)" % turbine.get_speed())
 
-	# 8) Separatory: produkcja pary (~ moc cieplna) - odbior (turbina + zrzut BRU) -> cisnienie.
-	steam_separators.step(heat_fraction, turbine.get_steam_offtake(), FIXED_DT)
+	# 8) Separatory: produkcja pary - odbior (turbina + zrzut BRU) -> cisnienie.
+	#    GT-1 (strukturalny): produkcja pary = CIEPLO ODDANE DO CHLODZIWA z 1C (opoznione
+	#    tau_f za moca), nie chwilowa moc. Rozwiazuje "para reaguje natychmiast" (napiecie K_P).
+	var steam_production := heat_fraction if _steam_instant \
+		else thermal_model.get_steam_production()
+	steam_separators.step(steam_production, turbine.get_steam_offtake(), FIXED_DT)
 
 	# 8b) Routing zrzutu BRU-K/BRU-A + skraplacz (ETAP 2D). Interlock BRU-K czyta ZMIERZONA
 	#     proznie z KONCA POPRZEDNIEGO kroku (kauzalnie, opoznienie 1 kroku): zrzut idzie do
@@ -518,7 +531,8 @@ func step() -> void:
 	#     BRAMKA: tryb manualny przeplywu (set_coolant_flow) to ETAP-1 tryb surowej fizyki -
 	#     OMIJA wtorny uklad wody (poziomy trzymane nominalnie, bez sprzezenia i tripow poziomu).
 	if not _manual_flow_override:
-		var steam_out := heat_fraction * separator_params.steam_production_per_power
+		# Wrzenie = produkcja pary z 1C (opozniona, GT-1), spojnie z wejsciem separatora.
+		var steam_out := steam_production * separator_params.steam_production_per_power
 		var condensed_in := condenser.get_steam_inflow()
 		feedwater.step(steam_separators.get_water_level(), condenser.get_hotwell_level(),
 			steam_out, FIXED_DT)

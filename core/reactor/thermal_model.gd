@@ -113,3 +113,21 @@ func get_void_fraction() -> float:
 ## Aktualna moc cieplna [W] (= P_nom * ulamek mocy cieplnej, prompt+decay).
 func get_thermal_power_watts() -> float:
 	return params.nominal_thermal_power * _last_heat_fraction
+
+
+## Produkcja pary [-] (GLOBALNE STROJENIE, GT-1 strukturalny): NIE chwilowa moc, lecz
+## rzeczywiste CIEPLO ODDANE DO CHLODZIWA (to ono odparowuje wode), znormalizowane:
+##   steam_production = UA*(T_f - T_c) / P_nom
+## W stanie ustalonym UA*(T_f-T_c) = P_nom*n -> = ulamek mocy (magnituda nietknieta).
+## W transiencie LAGuje za moca ze stala termiczna paliwa tau_f = C_f/UA (opoznienie WYNIKA
+## z dynamiki 1C, nie jest arbitralne). W granicy szybkiego paliwa (C_f->0) -> "para natychmiast".
+## Rozwiazuje strukturalny dlug "para reaguje natychmiast na skok mocy" (napiecie K_P w 2B).
+func get_steam_production() -> float:
+	return maxf(0.0, params.fuel_to_coolant_conductance * (_fuel_temp - _coolant_temp) \
+		/ params.nominal_thermal_power)
+
+
+## Stala czasowa odpowiedzi produkcji pary [s] = termiczna stala paliwa tau_f = C_f/UA.
+## Do dokumentacji i testu izolacji (potwierdzenie, ze lag wynika z modelu 1C).
+func boiling_response_time() -> float:
+	return params.fuel_heat_capacity / params.fuel_to_coolant_conductance
