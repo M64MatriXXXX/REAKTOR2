@@ -75,6 +75,10 @@ var makeup_flow: float = 0.0              # [-] dopływ uzupelniajacy (domyslnie
 var total_water_mass: float = 0.0         # [-] suma zapasow (separator+hotwell+deaerator)
 var bru_a_lost_cumulative: float = 0.0    # [-] skumulowany ubytek masy przez BRU-A (atmosfera)
 
+# --- Ksenon (ETAP 1D) ---
+var iodine_conc: float = 0.0              # [-] stezenie I-135 (bezwymiarowe)
+var xenon_conc: float = 0.0               # [-] stezenie Xe-135 (bezwymiarowe)
+
 # --- Bezpieczenstwo / stan bloku (ETAP 1E) ---
 var orm_equivalent_rods: float = 0.0      # [-] ORM jako rownowazne prety (1E-3)
 var reactor_state: int = 0                # ReactorStateMachine.State (OPERATE=2 na starcie)
@@ -132,6 +136,8 @@ func to_dict() -> Dictionary:
 		"makeup_flow": makeup_flow,
 		"total_water_mass": total_water_mass,
 		"bru_a_lost_cumulative": bru_a_lost_cumulative,
+		"iodine_conc": iodine_conc,
+		"xenon_conc": xenon_conc,
 		"orm_equivalent_rods": orm_equivalent_rods,
 		"reactor_state": reactor_state,
 		"active_trips": active_trips.duplicate(),
@@ -186,6 +192,8 @@ func from_dict(data: Dictionary) -> void:
 	makeup_flow = data.get("makeup_flow", 0.0)
 	total_water_mass = data.get("total_water_mass", 0.0)
 	bru_a_lost_cumulative = data.get("bru_a_lost_cumulative", 0.0)
+	iodine_conc = data.get("iodine_conc", 0.0)
+	xenon_conc = data.get("xenon_conc", 0.0)
 	orm_equivalent_rods = data.get("orm_equivalent_rods", 0.0)
 	reactor_state = data.get("reactor_state", 0)
 	active_trips.clear()

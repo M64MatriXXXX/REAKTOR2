@@ -38,6 +38,7 @@ var reactivity_model: ReactivityModel
 var control_rods: ControlRods
 var thermal_model: ThermalModel
 var decay_heat: DecayHeat
+var xenon: Xenon
 var main_pumps: MainCirculationPumps
 var steam_separators: SteamSeparators
 var turbine: Turbine
@@ -48,6 +49,7 @@ var feedwater: Feedwater
 var params: ReactorParams
 var reactivity_params: ReactivityParams
 var thermal_params: ThermalParams
+var xenon_params: XenonParams
 var pump_params: PumpParams
 var separator_params: SeparatorParams
 var turbine_params: TurbineParams
@@ -72,7 +74,11 @@ var _coolant_flow_fraction: float = 1.0    # wzgledny przeplyw chlodziwa 0..1 (z
 var _manual_flow_override: bool = false
 var _manual_flow_value: float = 1.0
 var _external_reactivity: float = 0.0      # bias zewnetrzny (scenariusze/testy)
-var _xenon_reactivity: float = 0.0         # wklad ksenonu (hak do 1D)
+var _xenon_reactivity: float = 0.0         # wklad ksenonu [Δρ] (ETAP 1D; 0 gdy wylaczony)
+# Ksenon DOMYSLNIE WYLACZONY (jak enable_void_coupling / enable_positive_scram): worth ~-2700 pcm
+# przy excess +500 pcm uczynilby reaktor podkrytycznym. Aktywacja + balans excess = GLOBALNE
+# STROJENIE. OFF -> _xenon_reactivity=0, fizyka rdzenia jak dotad (168 testow nietkniete).
+var _xenon_enabled: bool = false
 
 # Routing zrzutu pary (ETAP 2D). Domyslnie zrzut idzie do skraplacza (BRU-K), jesli proznia
 # zachowana; interlock przelacza na BRU-A (atmosfera). _force_bru_k OMIJA interlock (override
@@ -115,6 +121,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	reactivity_params = react_params if react_params != null else ReactivityParams.new()
 	thermal_params = therm_params if therm_params != null else ThermalParams.new()
 	safety_params = safe_params if safe_params != null else SafetyParams.new()
+	xenon_params = XenonParams.new()
 	pump_params = PumpParams.new()
 	separator_params = SeparatorParams.new()
 	turbine_params = TurbineParams.new()
@@ -125,6 +132,7 @@ func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 	reactivity_model = ReactivityModel.new(reactivity_params)
 	thermal_model = ThermalModel.new(thermal_params)
 	decay_heat = DecayHeat.new(thermal_params)
+	xenon = Xenon.new(xenon_params)
 	main_pumps = MainCirculationPumps.new(pump_params)
 	steam_separators = SteamSeparators.new(separator_params)
 	turbine = Turbine.new(turbine_params)
@@ -222,6 +230,14 @@ func get_event_log() -> Array[String]:
 ## Bias reaktywnosci zewnetrznej (scenariusze/eksperymenty/testy).
 func set_external_reactivity(value: float) -> void:
 	_external_reactivity = value
+
+## Wlaczenie/wylaczenie wkladu reaktywnosci ksenonu (ETAP 1D). DOMYSLNIE OFF - patrz _xenon_enabled.
+## UWAGA: przy wlaczeniu wymaga podniesienia excess_reactivity, by pokryc worth ksenonu (globalne strojenie).
+func set_xenon_enabled(enabled: bool) -> void:
+	_xenon_enabled = enabled
+
+func is_xenon_enabled() -> bool:
+	return _xenon_enabled
 
 ## Wymusza przeplyw chlodziwa 0..1 w jawnym TRYBIE MANUALNYM (override pomp ГЦН).
 ## Uzywane przez scenariusze/testy ETAPU 1; pompy sa wtedy pomijane jako zrodlo przeplywu.
@@ -426,6 +442,12 @@ func step() -> void:
 	neutronics.step(rho, FIXED_DT)
 	var fission_power := neutronics.get_power_fraction()
 
+	# 3b) Ksenon (ETAP 1D): dynamika Xe/I napedzana strumieniem (~moc rozszczepien). Wklad
+	#     reaktywnosci wchodzi w NASTEPNYM kroku (opoznienie 1 kroku, spojnie z reszta sprzezen).
+	#     Domyslnie WYLACZONY -> _xenon_reactivity=0 (balans z excess -> globalne strojenie).
+	xenon.step(fission_power, FIXED_DT)
+	_xenon_reactivity = xenon.xenon_reactivity() if _xenon_enabled else 0.0
+
 	# 4) Cieplo powylaczeniowe: rezerwuar produktow rozpadu (trwa po SCRAM).
 	decay_heat.step(fission_power, FIXED_DT)
 	# Calkowite cieplo = czesc prompt (z rozszczepien) + decay (z rozpadu).
@@ -540,6 +562,8 @@ func _sync_state(inputs: ReactivityInputs = null) -> void:
 	state.pumps_running = main_pumps.running_count()
 	state.thermal_power_mw = thermal_model.get_thermal_power_watts() / 1.0e6
 	state.decay_heat_fraction = decay_heat.get_decay_power_fraction()
+	state.iodine_conc = xenon.get_iodine()
+	state.xenon_conc = xenon.get_xenon()
 	state.orm_equivalent_rods = _orm_equivalent
 
 	# Separatory / obieg parowy (ETAP 2B).
