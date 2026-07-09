@@ -59,10 +59,76 @@ func test_tuned_preset_nominal_stable() -> void:
 
 
 func test_default_config_untouched_by_tuning() -> void:
-	# Regresja: domyslny reaktor NIETKNIETY (ksenon OFF, excess bazowy) - izolacja zachowana.
+	# Regresja: domyslny reaktor NIETKNIETY (ksenon OFF, void-coupling OFF, excess bazowy).
 	var sim := Simulation.new(0)
 	assert_false(sim.is_xenon_enabled(), "Domyslny: ksenon WYLACZONY")
+	assert_false(sim.separator_params.enable_void_coupling, "Domyslny: void-coupling WYLACZONY")
 	assert_almost_eq(sim.reactivity_params.excess_reactivity, 0.005, 1e-9, "Domyslny excess bazowy 500 pcm")
+
+
+# --- GT-V (wezel V): void-coupling + K_P (fizyczne) + dtsat (stala tablicowa) ---
+
+func test_dtsat_is_steam_table_constant() -> void:
+	# dtsat to STALA FIZYCZNA (dT_sat/dP @7 MPa z tablic parowych ~9.7 K/MPa), NIE strojona.
+	# Ten test broni granicy fizyka/galka: ktos "nastroi" dtsat -> test pada.
+	assert_almost_eq(SeparatorParams.new().dtsat_dp, 9.7, 0.4,
+		"dtsat = stala tablicowa dT_sat/dP @7 MPa (~9.7 K/MPa), nie parametr strojony")
+
+
+func test_kp_gives_physical_drum_response_time() -> void:
+	# K_P=0.15 dobrane z KRYTERIUM FIZYCZNEGO (nie na oko): czas odpowiedzi cisnienia bebna na
+	# pelny niebilans (zrzut zamkniety) ~10 s - buforowanie bebnow RBMK, okno fizyczne ~10-20 s.
+	var sim := Simulation.new(0)
+	sim.separator_params.pressure_capacitance = 0.15
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
+	sim.advance(2.0)
+	sim.set_dump_available(false)
+	var t_relief := -1.0
+	for i in range(int(round(60.0 / 0.02))):
+		sim.step()
+		if sim.state.pressure_mpa >= 8.5:
+			t_relief = sim.state.sim_time_seconds - 2.0
+			break
+	assert_gt(t_relief, 7.0, "K_P=0.15: odpowiedz cisnienia bebna w oknie fizycznym (dolna granica)")
+	assert_lt(t_relief, 14.0, "K_P=0.15: odpowiedz cisnienia bebna ~10 s (gorna granica; kryterium, nie oko)")
+
+
+func test_tuned_void_nominal_self_stabilizing() -> void:
+	# (1a) REGRESJA samostabilizacji: przy nominale (void=0, bo 8 K ponizej wrzenia) wlaczenie
+	# void-coupling NIE psuje stabilnosci - maly dodatni impuls tlumiony, power_coefficient < 0.
+	# (To regresja, nie test funkcji void-coupling - ta jest usupiona przy void=0.)
+	var sim := Simulation.tuned(0)
+	sim.advance(10.0)
+	var p0 := sim.state.reactor_power_fraction
+	sim.set_external_reactivity(0.0005)   # +50 pcm
+	sim.advance(40.0)
+	var p1 := sim.state.reactor_power_fraction
+	assert_lt(p1, 1.5, "Impuls +50 pcm: moc osiada na skonczonej rownowadze (nie rozbiega)")
+	assert_gt(p1, p0, "Dodatni impuls -> wyzsza moc (nowa rownowaga)")
+	assert_lt(-0.0005 / (p1 - p0), 0.0, "power_coefficient < 0 przy nominale (samostabilizacja, pelne sprzezenie)")
+	assert_false(sim.is_failed(), "Nominal tuned+void bez awarii")
+
+
+func test_void_coupling_recovers_reactor_from_excursion() -> void:
+	# (1b, poziom EKSKURSJI) Void-coupling ODZYSKUJE reaktor z ekskursji wrzenia; bez niego runaway.
+	# UWAGA: model void (1C) jest BISTABILNY - brak stabilnego UMIARKOWANEGO void, wiec test w
+	# rezimie posrednim (jak chcial user) wymaga WZBOGACENIA MODELU void -> zadanie wezla O.
+	# Tu dowodzimy tylko, ze void-coupling robi cos uzytecznego (recovery), nawet jesli na poziomie ekskursji.
+	assert_lt(_excursion_final_power(true), 2.0, "Z void-coupling reaktor sie UTRZYMUJE (moc ograniczona)")
+	assert_gt(_excursion_final_power(false), 5.0, "Bez void-coupling ekskursja ROZBIEGA sie (runaway)")
+
+
+func _excursion_final_power(void_on: bool) -> float:
+	var sim := Simulation.new(0)   # base+void (ksenon OFF) - izolacja efektu void-coupling
+	sim.separator_params.enable_void_coupling = void_on
+	sim.separator_params.pressure_capacitance = 0.15
+	sim.set_protection_enabled(false)
+	sim.set_failure_states_enabled(false)
+	sim.advance(2.0)
+	sim.set_coolant_flow(0.5)      # ponizej progu wrzenia -> ekskursja void-driven
+	sim.advance(120.0)
+	return sim.state.reactor_power_fraction
 
 
 func test_shutdown_margin_safe_at_target_excess() -> void:

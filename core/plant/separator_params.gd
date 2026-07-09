@@ -33,9 +33,12 @@ extends Resource
 # --- Temperatura nasycenia T_sat(P) (sprzezenie cisnienie->void) ---
 # Linearyzacja wokol punktu pracy: T_sat = tsat_ref + dtsat_dp*(P - tsat_ref_pressure).
 # Steam tables ~10 K/MPa przy 7 MPa. UPROSZCZENIE: liniowe w zakresie operacyjnym.
-@export var tsat_ref: float = 558.0               # K przy tsat_ref_pressure
+# STALE FIZYCZNE (tablice parowe @7 MPa) - NIE strojone. T_sat(6/7/8 MPa)=275.6/285.8/295.0 C
+# -> dT_sat/dP ~ 9.7 K/MPa. tsat_ref/tsat_ref_pressure = punkt odniesienia z tablic.
+# Jedyny STROJONY parametr petli cisnienia to pressure_capacitance (K_P) - patrz wyzej.
+@export var tsat_ref: float = 558.0               # K, T_sat(7 MPa) (~285.8 C)
 @export var tsat_ref_pressure: float = 7.0        # MPa
-@export var dtsat_dp: float = 10.0                # K/MPa
+@export var dtsat_dp: float = 9.7                 # K/MPa - STALA TABLICOWA (dT_sat/dP @7 MPa)
 # Sprzezenie P->void (przez T_sat) DOMYSLNIE WYLACZONE - DLUG DO GLOBALNEGO STROJENIA (po 2C).
 # Wlaczone nadmiernie tlumi szybkie ekskursje (wygasza emergentny Czarnobyl) - wymaga
 # wspolnego strojenia K_P/dtsat z pelnym ukladem, by nie zaburzyc zwalidowanej fizyki void.

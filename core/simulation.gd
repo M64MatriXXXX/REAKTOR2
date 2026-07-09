@@ -120,9 +120,11 @@ var _rng: RandomNumberGenerator
 ## wezlami (GT-4 void-coupling, GT-5 ORM...). Matched pair: excess ustawiony -> ksenon wlaczony.
 static func tuned(seed_value: int = 0) -> Simulation:
 	var rp := ReactivityParams.new()
-	rp.excess_reactivity -= XenonParams.new().equilibrium_worth_nominal   # +|worth Xe| -> 0.032
+	rp.excess_reactivity -= XenonParams.new().equilibrium_worth_nominal   # X: +|worth Xe| -> 0.032
 	var sim := Simulation.new(seed_value, null, rp, null, null)
-	sim.set_xenon_enabled(true)
+	sim.set_xenon_enabled(true)                              # X: ksenon ON
+	sim.separator_params.enable_void_coupling = true         # V: sprzezenie cisnienie->void ON
+	sim.separator_params.pressure_capacitance = 0.15         # V: K_P z kryterium bebna (~10 s odpowiedzi)
 	sim.reinitialize_critical()   # prety na pozycji krytycznej Z ksenonem (nominal 0.24)
 	return sim
 
