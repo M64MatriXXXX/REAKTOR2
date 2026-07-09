@@ -44,6 +44,27 @@ func test_criticality_restored_at_same_point() -> void:
 	assert_almost_eq(orm.equivalent_rods(x_target), 30.0, 1.0, "ORM przy krytycznosci ~30 (norma RBMK)")
 
 
+func test_tuned_preset_nominal_stable() -> void:
+	# GT-3 (wezel X): preset tuned (excess=0.032 + enable_xenon, matched pair) - nominal stabilny
+	# w tym samym punkcie co bazowy, z realnym ksenonem w rownowadze. Domyslna konfiguracja
+	# (Simulation.new) POZOSTAJE bazowa/OFF - przelaczenie domyslnej na tuned to OSTATNI wezel DAG.
+	var sim := Simulation.tuned(0)
+	assert_true(sim.is_xenon_enabled(), "Preset tuned: ksenon WLACZONY")
+	sim.advance(60.0)
+	assert_almost_eq(sim.state.reactor_power_fraction, 1.0, 0.02, "Nominal tuned stabilny (moc ~1)")
+	assert_almost_eq(sim.state.rho_xenon, -0.027, 1e-3, "rho_xenon w rownowadze nominalnej (~-2700 pcm)")
+	assert_almost_eq(sim.state.rod_insertion, 0.2423, 1e-2, "Prety na krytycznej Z ksenonem (~0.24)")
+	assert_almost_eq(sim.state.orm_equivalent_rods, 30.0, 1.5, "ORM ~30 (norma RBMK, matched pair)")
+	assert_false(sim.is_failed(), "Nominal tuned bez awarii")
+
+
+func test_default_config_untouched_by_tuning() -> void:
+	# Regresja: domyslny reaktor NIETKNIETY (ksenon OFF, excess bazowy) - izolacja zachowana.
+	var sim := Simulation.new(0)
+	assert_false(sim.is_xenon_enabled(), "Domyslny: ksenon WYLACZONY")
+	assert_almost_eq(sim.reactivity_params.excess_reactivity, 0.005, 1e-9, "Domyslny excess bazowy 500 pcm")
+
+
 func test_shutdown_margin_safe_at_target_excess() -> void:
 	var rm := ReactivityModel.new(ReactivityParams.new())
 	# NAJGORSZY przypadek: ksenon zaniknal (=0) i juz NIE pomaga podkrytycznosci.

@@ -113,6 +113,20 @@ var _time_accumulator: float = 0.0
 var _rng: RandomNumberGenerator
 
 
+## PRESET TUNED (globalne strojenie GT-3): reaktor z pelna fizyka (excess pokrywajacy worth
+## ksenonu + enable_xenon ON). Domyslna konfiguracja (Simulation.new) POZOSTAJE bazowa/uproszczona
+## - dzieki temu eksperymenty stroją JEDNO sprzezenie naraz. Przelaczenie domyslnej na tuned =
+## OSTATNI, jawny krok strojenia (koniec GT-5, po pelnej walidacji). Preset rosnie z kolejnymi
+## wezlami (GT-4 void-coupling, GT-5 ORM...). Matched pair: excess ustawiony -> ksenon wlaczony.
+static func tuned(seed_value: int = 0) -> Simulation:
+	var rp := ReactivityParams.new()
+	rp.excess_reactivity -= XenonParams.new().equilibrium_worth_nominal   # +|worth Xe| -> 0.032
+	var sim := Simulation.new(seed_value, null, rp, null, null)
+	sim.set_xenon_enabled(true)
+	sim.reinitialize_critical()   # prety na pozycji krytycznej Z ksenonem (nominal 0.24)
+	return sim
+
+
 ## seed_value - ziarno determinizmu; opcjonalne zestawy stalych (domyslnie standardowe).
 func _init(seed_value: int = 0, reactor_params: ReactorParams = null,
 		react_params: ReactivityParams = null, therm_params: ThermalParams = null,
@@ -243,6 +257,19 @@ func set_xenon_enabled(enabled: bool) -> void:
 func is_xenon_enabled() -> bool:
 	return _xenon_enabled
 
+## Przelicza pozycje krytyczna pretow z uwzglednieniem rownowagi ksenonowej (GT-3) i ustawia
+## na niej prety. Potrzebne po wlaczeniu ksenonu: bez tego prety staja na krytycznej dla samego
+## excessu (za plytko), a ksenon czyni reaktor podkrytycznym. Z ksenonem: net = excess + rho_Xe.
+func reinitialize_critical() -> void:
+	var xenon_r := xenon.xenon_reactivity() if _xenon_enabled else 0.0
+	# Wklad ksenonu MUSI byc spojny od pierwszego kroku (inaczej prety krytyczne-z-ksenonem +
+	# _xenon_reactivity=0 -> reaktor prompt-nadkrytyczny na kroku 1). Ustawiamy go tu.
+	_xenon_reactivity = xenon_r
+	var crit := reactivity_model.critical_rod_insertion(reactivity_params.excess_reactivity + xenon_r)
+	control_rods.set_position(crit)
+	_orm_equivalent = orm_model.equivalent_rods(crit)
+	_sync_state()
+
 ## Diagnostyka GT-1: produkcja pary = chwilowa moc (stary model) zamiast cieplo z 1C.
 ## Do czystego porownania S; NIE do normalnego uzytku (para powstaje z ciepla, nie z mocy).
 func set_steam_instant(instant: bool) -> void:
@@ -363,6 +390,7 @@ func cold_shutdown(cold_source: float = 1.0e-3, standby_power: float = 0.01) -> 
 	set_neutron_source(cold_source)              # zrodlo rozruchowe -> podkrytyczna podloga
 	neutronics.initialize_steady_state(standby_power)
 	decay_heat.initialize_steady_state(standby_power)
+	xenon.initialize_equilibrium(0.0)             # czysty rdzen (ksenon zanika/zaniknal na zimno)
 	turbine.cold_start()                          # turbina na obracarce
 	if grid.is_breaker_closed():
 		grid.open_breaker()
