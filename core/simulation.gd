@@ -263,6 +263,12 @@ func is_xenon_enabled() -> bool:
 ## na niej prety. Potrzebne po wlaczeniu ksenonu: bez tego prety staja na krytycznej dla samego
 ## excessu (za plytko), a ksenon czyni reaktor podkrytycznym. Z ksenonem: net = excess + rho_Xe.
 func reinitialize_critical() -> void:
+	# Odswiez cache termiczny sim z modelu (po ewentualnej zmianie krzywej void / re-init termiki),
+	# by pierwszy krok liczyl reaktywnosc ze SPOJNYM void (inaczej void=cache_stary vs void_ref ->
+	# kick reaktywnosci na kroku 1). Ten sam powod co dla ksenonu nizej.
+	_fuel_temp = thermal_model.get_fuel_temp()
+	_coolant_temp = thermal_model.get_coolant_temp()
+	_void_fraction = thermal_model.get_void_fraction()
 	var xenon_r := xenon.xenon_reactivity() if _xenon_enabled else 0.0
 	# Wklad ksenonu MUSI byc spojny od pierwszego kroku (inaczej prety krytyczne-z-ksenonem +
 	# _xenon_reactivity=0 -> reaktor prompt-nadkrytyczny na kroku 1). Ustawiamy go tu.
